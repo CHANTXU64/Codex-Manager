@@ -5,7 +5,7 @@ use crate::apikey_profile::{
 use crate::gateway::request_helpers::ParsedRequestMetadata;
 use base64::Engine;
 use bytes::Bytes;
-use codexmanager_core::storage::ApiKey;
+use codexmanager_core::storage::{ApiKey, ConversationBinding};
 use reqwest::Method;
 use sha2::{Digest, Sha256};
 use tiny_http::Request;
@@ -1222,6 +1222,17 @@ fn resolve_route_conversation_id(
     })
 }
 
+fn conversation_binding_for_thread_anchor<'a>(
+    route_conversation_source: Option<super::super::RouteConversationSource>,
+    conversation_binding: Option<&'a ConversationBinding>,
+) -> Option<&'a ConversationBinding> {
+    if route_conversation_source.is_some_and(|source| source.is_prompt_cache_key()) {
+        None
+    } else {
+        conversation_binding
+    }
+}
+
 fn resolve_client_is_stream(
     protocol_type: &str,
     normalized_path: &str,
@@ -1606,17 +1617,10 @@ pub(super) fn build_local_validation_result(
         route_conversation_id.as_deref(),
     )
     .map_err(|err| LocalValidationError::new(500, err))?;
-    let binding_for_thread_anchor = if route_conversation_source.is_some_and(|source| {
-        matches!(
-            source,
-            super::super::RouteConversationSource::PromptCacheKey
-                | super::super::RouteConversationSource::PromptCacheKeyExistingOnly
-        )
-    }) {
-        None
-    } else {
-        conversation_binding.as_ref()
-    };
+    let binding_for_thread_anchor = conversation_binding_for_thread_anchor(
+        route_conversation_source,
+        conversation_binding.as_ref(),
+    );
     let effective_thread_anchor = super::super::resolve_fallback_thread_anchor(
         &incoming_headers,
         local_conversation_id.as_deref(),

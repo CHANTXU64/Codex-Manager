@@ -444,6 +444,30 @@ fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
 }
 
 #[test]
+fn existing_only_prompt_cache_binding_is_not_used_as_fallback_thread_anchor() {
+    let binding = codexmanager_core::storage::ConversationBinding {
+        platform_key_hash: "key-hash-1".to_string(),
+        conversation_id: "pck:v1:abcdef".to_string(),
+        account_id: "acc-1".to_string(),
+        thread_epoch: 1,
+        thread_anchor: "pck:v1:abcdef".to_string(),
+        status: "active".to_string(),
+        last_model: Some("gpt-5.5".to_string()),
+        last_switch_reason: None,
+        created_at: 1,
+        updated_at: 1,
+        last_used_at: 1,
+    };
+
+    let actual = conversation_binding_for_thread_anchor(
+        Some(super::super::super::RouteConversationSource::PromptCacheKeyExistingOnly),
+        Some(&binding),
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
 fn route_conversation_id_uses_existing_only_prompt_cache_key_when_previous_response_id_exists() {
     let incoming_headers = sample_incoming_headers(None, None, None, None, None);
     let initial_request_meta = sample_request_metadata_with_previous_response(

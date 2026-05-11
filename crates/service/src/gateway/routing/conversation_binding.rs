@@ -22,7 +22,7 @@ pub(crate) enum RouteConversationSource {
 }
 
 impl RouteConversationSource {
-    fn is_prompt_cache_key(self) -> bool {
+    pub(crate) fn is_prompt_cache_key(self) -> bool {
         matches!(
             self,
             Self::PromptCacheKey | Self::PromptCacheKeyExistingOnly
