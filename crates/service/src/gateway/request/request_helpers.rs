@@ -14,6 +14,7 @@ pub(crate) struct ParsedRequestMetadata {
     pub(crate) request_shape: Option<String>,
     pub(crate) has_prompt_cache_key: bool,
     pub(crate) prompt_cache_key: Option<String>,
+    pub(crate) has_previous_response_id: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -98,6 +99,11 @@ pub(crate) fn parse_request_metadata(body: &[u8]) -> ParsedRequestMetadata {
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
+    let has_previous_response_id = value
+        .get("previous_response_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|v| !v.is_empty());
     let service_tier = inspect_service_tier_value(value.get("service_tier")).normalized_value;
 
     ParsedRequestMetadata {
@@ -112,6 +118,7 @@ pub(crate) fn parse_request_metadata(body: &[u8]) -> ParsedRequestMetadata {
         request_shape,
         has_prompt_cache_key,
         prompt_cache_key,
+        has_previous_response_id,
     }
 }
 

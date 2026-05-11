@@ -217,6 +217,20 @@ fn sample_request_metadata(prompt_cache_key: Option<&str>) -> ParsedRequestMetad
     }
 }
 
+fn sample_request_metadata_with_previous_response(
+    prompt_cache_key: Option<&str>,
+    previous_response_id: Option<&str>,
+) -> ParsedRequestMetadata {
+    ParsedRequestMetadata {
+        prompt_cache_key: prompt_cache_key.map(str::to_string),
+        has_prompt_cache_key: prompt_cache_key.is_some(),
+        has_previous_response_id: previous_response_id
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        ..Default::default()
+    }
+}
+
 fn sample_incoming_headers(
     conversation_id: Option<&str>,
     turn_state: Option<&str>,
@@ -361,6 +375,157 @@ fn preferred_client_prompt_cache_key_is_disabled_for_anthropic_native_requests()
     );
 
     assert_eq!(actual, None);
+}
+
+#[test]
+fn route_conversation_id_uses_prompt_cache_key_without_native_anchor() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(
+        actual.source,
+        super::super::super::RouteConversationSource::PromptCacheKey
+    );
+    assert!(actual.id.starts_with("pck:v1:"));
+    assert!(!actual.id.contains("client_thread_123456"));
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_when_turn_state_exists() {
+    let incoming_headers =
+        sample_incoming_headers(None, Some("turn_state_anchor"), None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
+    let incoming_headers = sample_incoming_headers(Some("native-conv"), None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(
+        actual.source,
+        super::super::super::RouteConversationSource::NativeConversation
+    );
+    assert_eq!(actual.id, "native-conv");
+}
+
+#[test]
+fn existing_only_prompt_cache_binding_is_not_used_as_fallback_thread_anchor() {
+    let binding = codexmanager_core::storage::ConversationBinding {
+        platform_key_hash: "key-hash-1".to_string(),
+        conversation_id: "pck:v1:abcdef".to_string(),
+        account_id: "acc-1".to_string(),
+        thread_epoch: 1,
+        thread_anchor: "pck:v1:abcdef".to_string(),
+        status: "active".to_string(),
+        last_model: Some("gpt-5.5".to_string()),
+        last_switch_reason: None,
+        created_at: 1,
+        updated_at: 1,
+        last_used_at: 1,
+    };
+
+    let actual = conversation_binding_for_thread_anchor(
+        Some(super::super::super::RouteConversationSource::PromptCacheKeyExistingOnly),
+        Some(&binding),
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn route_conversation_id_uses_existing_only_prompt_cache_key_when_previous_response_id_exists() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata_with_previous_response(
+        Some("client_thread_123456"),
+        Some("resp_previous"),
+    );
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(
+        actual.source,
+        super::super::super::RouteConversationSource::PromptCacheKeyExistingOnly
+    );
+    assert!(actual.id.starts_with("pck:v1:"));
+    assert!(!actual.id.contains("client_thread_123456"));
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_for_non_responses_path_prefix() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responsesxxx",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn prompt_cache_route_id_is_not_split_by_model() {
+    let first = prompt_cache_route_id(
+        "platform-key-hash",
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "client_thread_123456",
+    );
+    let second = prompt_cache_route_id(
+        "platform-key-hash",
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "client_thread_123456",
+    );
+
+    assert_eq!(first, second);
 }
 
 /// 函数 `aggregate_passthrough_applies_model_reasoning_and_service_tier_overrides_without_forcing_log_tier`

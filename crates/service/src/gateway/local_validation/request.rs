@@ -5,8 +5,9 @@ use crate::apikey_profile::{
 use crate::gateway::request_helpers::ParsedRequestMetadata;
 use base64::Engine;
 use bytes::Bytes;
-use codexmanager_core::storage::ApiKey;
+use codexmanager_core::storage::{ApiKey, ConversationBinding};
 use reqwest::Method;
+use sha2::{Digest, Sha256};
 use tiny_http::Request;
 
 use super::{LocalValidationError, LocalValidationResult};
@@ -1128,6 +1129,110 @@ fn resolve_local_conversation_id(
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RouteConversationId {
+    id: String,
+    source: super::super::RouteConversationSource,
+}
+
+fn prompt_cache_route_binding_enabled(protocol_type: &str, normalized_path: &str) -> bool {
+    protocol_type == crate::apikey_profile::PROTOCOL_OPENAI_COMPAT
+        && super::super::official_responses_http::is_responses_path(normalized_path)
+}
+
+fn normalized_prompt_cache_key_for_route<'a>(
+    initial_request_meta: &'a ParsedRequestMetadata,
+    client_request_meta: &'a ParsedRequestMetadata,
+) -> Option<&'a str> {
+    initial_request_meta
+        .prompt_cache_key
+        .as_deref()
+        .or(client_request_meta.prompt_cache_key.as_deref())
+        .map(str::trim)
+        .filter(|value| value.len() >= 8)
+}
+
+fn prompt_cache_route_id(
+    platform_key_hash: &str,
+    protocol_type: &str,
+    prompt_cache_key: &str,
+) -> String {
+    let digest = Sha256::digest(
+        format!(
+            "pck:v1\0{platform_key_hash}\0{protocol_type}\0{}",
+            prompt_cache_key.trim()
+        )
+        .as_bytes(),
+    );
+    format!(
+        "pck:v1:{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+        digest[8], digest[9], digest[10], digest[11], digest[12], digest[13], digest[14], digest[15]
+    )
+}
+
+fn resolve_route_conversation_id(
+    protocol_type: &str,
+    normalized_path: &str,
+    platform_key_hash: &str,
+    incoming_headers: &super::super::IncomingHeaderSnapshot,
+    initial_request_meta: &ParsedRequestMetadata,
+    client_request_meta: &ParsedRequestMetadata,
+) -> Option<RouteConversationId> {
+    if let Some(conversation_id) = incoming_headers
+        .conversation_id()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(RouteConversationId {
+            id: conversation_id.to_string(),
+            source: super::super::RouteConversationSource::NativeConversation,
+        });
+    }
+
+    if incoming_headers.turn_state().is_some() {
+        return None;
+    }
+
+    if prompt_cache_route_binding_enabled(protocol_type, normalized_path) {
+        if let Some(prompt_cache_key) =
+            normalized_prompt_cache_key_for_route(initial_request_meta, client_request_meta)
+        {
+            let source = if initial_request_meta.has_previous_response_id
+                || client_request_meta.has_previous_response_id
+            {
+                super::super::RouteConversationSource::PromptCacheKeyExistingOnly
+            } else {
+                super::super::RouteConversationSource::PromptCacheKey
+            };
+            return Some(RouteConversationId {
+                id: prompt_cache_route_id(platform_key_hash, protocol_type, prompt_cache_key),
+                source,
+            });
+        }
+    }
+
+    super::super::resolve_local_conversation_id_with_sticky_fallback(
+        incoming_headers,
+        should_derive_compat_conversation_anchor(protocol_type, normalized_path),
+    )
+    .map(|id| RouteConversationId {
+        id,
+        source: super::super::RouteConversationSource::StickyFallback,
+    })
+}
+
+fn conversation_binding_for_thread_anchor<'a>(
+    route_conversation_source: Option<super::super::RouteConversationSource>,
+    conversation_binding: Option<&'a ConversationBinding>,
+) -> Option<&'a ConversationBinding> {
+    if route_conversation_source.is_some_and(|source| source.is_prompt_cache_key()) {
+        None
+    } else {
+        conversation_binding
+    }
+}
+
 fn resolve_client_is_stream(
     protocol_type: &str,
     normalized_path: &str,
@@ -1333,6 +1438,8 @@ pub(super) fn build_local_validation_result(
             key_id: api_key.id,
             platform_key_hash: api_key.key_hash,
             local_conversation_id: initial_local_conversation_id,
+            route_conversation_id: None,
+            route_conversation_source: None,
             conversation_binding: None,
             model_for_log,
             reasoning_for_log,
@@ -1494,16 +1601,30 @@ pub(super) fn build_local_validation_result(
         normalized_path.as_str(),
         native_codex_client,
     );
+    let route_conversation = resolve_route_conversation_id(
+        effective_protocol_type,
+        normalized_path.as_str(),
+        api_key.key_hash.as_str(),
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+    let route_conversation_id = route_conversation.as_ref().map(|route| route.id.clone());
+    let route_conversation_source = route_conversation.as_ref().map(|route| route.source);
     let conversation_binding = super::super::conversation_binding::load_conversation_binding(
         &storage,
         api_key.key_hash.as_str(),
-        local_conversation_id.as_deref(),
+        route_conversation_id.as_deref(),
     )
     .map_err(|err| LocalValidationError::new(500, err))?;
+    let binding_for_thread_anchor = conversation_binding_for_thread_anchor(
+        route_conversation_source,
+        conversation_binding.as_ref(),
+    );
     let effective_thread_anchor = super::super::resolve_fallback_thread_anchor(
         &incoming_headers,
         local_conversation_id.as_deref(),
-        conversation_binding.as_ref(),
+        binding_for_thread_anchor,
     );
     // 中文注释：保留原始 local conversation_id 作为对外会话标识；
     // 线程世代只参与 prompt_cache_key 与路由绑定，不直接污染对外请求头。
@@ -1595,6 +1716,8 @@ pub(super) fn build_local_validation_result(
         key_id: api_key.id,
         platform_key_hash: api_key.key_hash,
         local_conversation_id,
+        route_conversation_id,
+        route_conversation_source,
         conversation_binding,
         rotation_strategy: api_key.rotation_strategy,
         aggregate_api_id: api_key.aggregate_api_id,
