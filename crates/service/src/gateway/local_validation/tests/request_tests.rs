@@ -444,7 +444,7 @@ fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
 }
 
 #[test]
-fn route_conversation_id_does_not_use_prompt_cache_key_when_previous_response_id_exists() {
+fn route_conversation_id_uses_existing_only_prompt_cache_key_when_previous_response_id_exists() {
     let incoming_headers = sample_incoming_headers(None, None, None, None, None);
     let initial_request_meta = sample_request_metadata_with_previous_response(
         Some("client_thread_123456"),
@@ -459,9 +459,15 @@ fn route_conversation_id_does_not_use_prompt_cache_key_when_previous_response_id
         &incoming_headers,
         &initial_request_meta,
         &client_request_meta,
-    );
+    )
+    .expect("route id");
 
-    assert!(actual.is_none());
+    assert_eq!(
+        actual.source,
+        super::super::super::RouteConversationSource::PromptCacheKeyExistingOnly
+    );
+    assert!(actual.id.starts_with("pck:v1:"));
+    assert!(!actual.id.contains("client_thread_123456"));
 }
 
 #[test]

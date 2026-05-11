@@ -1190,10 +1190,7 @@ fn resolve_route_conversation_id(
         });
     }
 
-    if incoming_headers.turn_state().is_some()
-        || initial_request_meta.has_previous_response_id
-        || client_request_meta.has_previous_response_id
-    {
+    if incoming_headers.turn_state().is_some() {
         return None;
     }
 
@@ -1201,9 +1198,16 @@ fn resolve_route_conversation_id(
         if let Some(prompt_cache_key) =
             normalized_prompt_cache_key_for_route(initial_request_meta, client_request_meta)
         {
+            let source = if initial_request_meta.has_previous_response_id
+                || client_request_meta.has_previous_response_id
+            {
+                super::super::RouteConversationSource::PromptCacheKeyExistingOnly
+            } else {
+                super::super::RouteConversationSource::PromptCacheKey
+            };
             return Some(RouteConversationId {
                 id: prompt_cache_route_id(platform_key_hash, protocol_type, prompt_cache_key),
-                source: super::super::RouteConversationSource::PromptCacheKey,
+                source,
             });
         }
     }

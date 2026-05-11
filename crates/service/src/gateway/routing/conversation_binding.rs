@@ -18,6 +18,20 @@ pub(crate) enum RouteConversationSource {
     NativeConversation,
     StickyFallback,
     PromptCacheKey,
+    PromptCacheKeyExistingOnly,
+}
+
+impl RouteConversationSource {
+    fn is_prompt_cache_key(self) -> bool {
+        matches!(
+            self,
+            Self::PromptCacheKey | Self::PromptCacheKeyExistingOnly
+        )
+    }
+
+    fn allows_initial_binding_create(self) -> bool {
+        !matches!(self, Self::PromptCacheKeyExistingOnly)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,7 +371,7 @@ pub(crate) fn resolve_attempt_thread(
     account: &Account,
 ) -> Option<ConversationThreadAttempt> {
     let routing = routing?;
-    if routing.source == RouteConversationSource::PromptCacheKey {
+    if routing.source.is_prompt_cache_key() {
         return None;
     }
     match routing.existing_binding.as_ref() {
@@ -422,11 +436,9 @@ pub(crate) fn record_conversation_binding_terminal_response(
             )
             .map(|_| ())
             .map_err(|err| format!("touch conversation binding failed: {err}")),
-        Some(_) if routing.source == RouteConversationSource::PromptCacheKey => Ok(()),
+        Some(_) if routing.source.is_prompt_cache_key() && routing.binding_selected => Ok(()),
         Some(binding) if status_code < 400 => {
-            let (thread_epoch, thread_anchor) = if routing.source
-                == RouteConversationSource::PromptCacheKey
-            {
+            let (thread_epoch, thread_anchor) = if routing.source.is_prompt_cache_key() {
                 (binding.thread_epoch + 1, binding.thread_anchor.clone())
             } else {
                 let attempt_thread = attempt_thread
@@ -446,10 +458,8 @@ pub(crate) fn record_conversation_binding_terminal_response(
                 .upsert_conversation_binding(&next)
                 .map_err(|err| format!("rebind conversation binding failed: {err}"))
         }
-        None if status_code < 400 => {
-            let (thread_epoch, thread_anchor) = if routing.source
-                == RouteConversationSource::PromptCacheKey
-            {
+        None if status_code < 400 && routing.source.allows_initial_binding_create() => {
+            let (thread_epoch, thread_anchor) = if routing.source.is_prompt_cache_key() {
                 (1, routing.conversation_id.clone())
             } else {
                 let attempt_thread = attempt_thread
@@ -717,7 +727,49 @@ mod tests {
     }
 
     #[test]
-    fn prompt_cache_route_binding_does_not_rebind_after_failover_success() {
+    fn prompt_cache_route_binding_does_not_rebind_after_selected_binding_failover_success() {
+        let storage = Storage::open_in_memory().expect("open in memory");
+        storage.init().expect("init schema");
+        let mut binding = sample_binding("acc-1");
+        binding.conversation_id = "pck:v1:abcdef".to_string();
+        binding.thread_anchor = "pck:v1:abcdef".to_string();
+        storage
+            .upsert_conversation_binding(&binding)
+            .expect("seed binding");
+        let mut candidates = vec![
+            (sample_account("acc-1", 0), sample_token("acc-1")),
+            (sample_account("acc-2", 1), sample_token("acc-2")),
+        ];
+        let routing = prepare_conversation_routing_with_source(
+            "key-hash-1",
+            Some("pck:v1:abcdef"),
+            Some(&binding),
+            &mut candidates,
+            RouteConversationSource::PromptCacheKey,
+        )
+        .expect("routing context");
+        assert!(routing.binding_selected);
+
+        record_conversation_binding_terminal_response(
+            &storage,
+            Some(&routing),
+            &candidates[1].0,
+            Some("gpt-5.5"),
+            200,
+        )
+        .expect("record failover success");
+
+        let actual = storage
+            .get_conversation_binding("key-hash-1", "pck:v1:abcdef")
+            .expect("load binding")
+            .expect("binding exists");
+        assert_eq!(actual.account_id, "acc-1");
+        assert_eq!(actual.thread_anchor, "pck:v1:abcdef");
+        assert_eq!(actual.thread_epoch, 1);
+    }
+
+    #[test]
+    fn prompt_cache_route_binding_rebinds_when_bound_account_is_not_selected() {
         let storage = Storage::open_in_memory().expect("open in memory");
         storage.init().expect("init schema");
         let mut binding = sample_binding("acc-1");
@@ -735,6 +787,7 @@ mod tests {
             RouteConversationSource::PromptCacheKey,
         )
         .expect("routing context");
+        assert!(!routing.binding_selected);
 
         record_conversation_binding_terminal_response(
             &storage,
@@ -743,15 +796,44 @@ mod tests {
             Some("gpt-5.5"),
             200,
         )
-        .expect("record failover success");
+        .expect("record stale rebind success");
 
         let actual = storage
             .get_conversation_binding("key-hash-1", "pck:v1:abcdef")
             .expect("load binding")
             .expect("binding exists");
-        assert_eq!(actual.account_id, "acc-1");
+        assert_eq!(actual.account_id, "acc-2");
         assert_eq!(actual.thread_anchor, "pck:v1:abcdef");
-        assert_eq!(actual.thread_epoch, 1);
+        assert_eq!(actual.thread_epoch, 2);
+    }
+
+    #[test]
+    fn prompt_cache_existing_only_route_binding_does_not_create_initial_binding() {
+        let storage = Storage::open_in_memory().expect("open in memory");
+        storage.init().expect("init schema");
+        let mut candidates = vec![(sample_account("acc-1", 0), sample_token("acc-1"))];
+        let routing = prepare_conversation_routing_with_source(
+            "key-hash-1",
+            Some("pck:v1:abcdef"),
+            None,
+            &mut candidates,
+            RouteConversationSource::PromptCacheKeyExistingOnly,
+        )
+        .expect("routing context");
+
+        record_conversation_binding_terminal_response(
+            &storage,
+            Some(&routing),
+            &candidates[0].0,
+            Some("gpt-5.5"),
+            200,
+        )
+        .expect("record existing-only success");
+
+        let actual = storage
+            .get_conversation_binding("key-hash-1", "pck:v1:abcdef")
+            .expect("load binding");
+        assert!(actual.is_none());
     }
 
     /// 函数 `apply_candidate_rotation_reports_binding_source_when_binding_selected`
