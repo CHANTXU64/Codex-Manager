@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 use codexmanager_core::rpc::types::{
     GatewayTraceListParams, GatewayTraceListResult, GatewayTraceLogEntry,
@@ -82,24 +84,31 @@ fn trace_file_path_from_env() -> PathBuf {
 }
 
 fn read_trace_file_tail() -> Result<String, String> {
-    let path = trace_file_path_from_env();
-    let metadata = match fs::metadata(&path) {
+    read_trace_file_tail_from_path(&trace_file_path_from_env())
+}
+
+fn read_trace_file_tail_from_path(path: &Path) -> Result<String, String> {
+    let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
         Err(err) => return Err(format!("read gateway trace metadata failed: {err}")),
     };
-    let content =
-        fs::read_to_string(&path).map_err(|err| format!("read gateway trace log failed: {err}"))?;
-    if metadata.len() <= MAX_TRACE_FILE_BYTES {
-        return Ok(content);
+    let file_len = metadata.len();
+    let read_len = file_len.min(MAX_TRACE_FILE_BYTES);
+    let start = file_len.saturating_sub(read_len);
+    let mut file =
+        File::open(path).map_err(|err| format!("open gateway trace log failed: {err}"))?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|err| format!("seek gateway trace log failed: {err}"))?;
+    let mut buffer = vec![0; read_len as usize];
+    file.read_exact(&mut buffer)
+        .map_err(|err| format!("read gateway trace log tail failed: {err}"))?;
+    if start > 0 {
+        if let Some(newline_pos) = buffer.iter().position(|byte| *byte == b'\n') {
+            buffer.drain(..=newline_pos);
+        }
     }
-    let keep_from = content
-        .char_indices()
-        .rev()
-        .find(|(index, _)| content.len().saturating_sub(*index) >= MAX_TRACE_FILE_BYTES as usize)
-        .map(|(index, _)| index)
-        .unwrap_or(0);
-    Ok(content[keep_from..].to_string())
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn parse_trace_line(line: &str) -> Option<GatewayTraceLogEntry> {
@@ -155,7 +164,12 @@ fn clamp_page(page: i64, total: i64, page_size: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_page_size, parse_trace_line, MAX_GATEWAY_TRACE_PAGE_SIZE};
+    use std::fs;
+
+    use super::{
+        normalize_page_size, parse_trace_line, read_trace_file_tail_from_path,
+        MAX_GATEWAY_TRACE_PAGE_SIZE, MAX_TRACE_FILE_BYTES,
+    };
 
     #[test]
     fn parses_key_value_trace_line() {
@@ -170,6 +184,37 @@ mod tests {
             entry.fields.get("route_source").map(String::as_str),
             Some("prompt_cache_key")
         );
+    }
+
+    #[test]
+    fn parser_documents_space_delimited_value_limitation() {
+        let entry = parse_trace_line("ts=123 event=TEST trace_id=trc_1 reason=hello world")
+            .expect("trace entry");
+        assert_eq!(
+            entry.fields.get("reason").map(String::as_str),
+            Some("hello")
+        );
+        assert!(entry.raw.ends_with("reason=hello world"));
+    }
+
+    #[test]
+    fn reads_only_tail_and_drops_partial_first_line() {
+        let path = std::env::temp_dir().join(format!(
+            "codexmanager-trace-tail-{}-{}.log",
+            std::process::id(),
+            MAX_TRACE_FILE_BYTES
+        ));
+        let mut content = "partial_line_without_newline"
+            .repeat((MAX_TRACE_FILE_BYTES as usize / "partial_line_without_newline".len()) + 2);
+        content.push_str("\nts=999 event=ROUTE_CONVERSATION_DECISION trace_id=trc_tail route_source=prompt_cache_key\n");
+        fs::write(&path, content).expect("write trace file");
+
+        let tail = read_trace_file_tail_from_path(&path).expect("read trace tail");
+        let _ = fs::remove_file(&path);
+
+        assert!(tail.len() <= MAX_TRACE_FILE_BYTES as usize);
+        assert!(!tail.starts_with("partial_line_without_newline"));
+        assert!(tail.contains("trace_id=trc_tail"));
     }
 
     #[test]

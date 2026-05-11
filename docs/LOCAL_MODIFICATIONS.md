@@ -452,6 +452,26 @@ Before merging this branch or resolving conflicts, verify these exact items:
   - `cargo check -p codexmanager-service`
   - `pnpm run build:desktop` in `apps/`
 
+### 2026-05-11 22:50 CST - PR #2 review fixes
+
+- Branch: `fix/prompt-cache-route-logging`
+- Modified files:
+  - `crates/service/src/requestlog/requestlog_trace_list.rs`
+  - `apps/src/app/logs/page.tsx`
+  - `docs/LOCAL_MODIFICATIONS.md`
+- Summary:
+  - Changed trace log reading from full-file `read_to_string` to `File::open` +
+    `seek` from the file tail, reading at most `MAX_TRACE_FILE_BYTES` and dropping
+    the first partial line when reading from the middle of a log file.
+  - Added `traceIdFilter` state in `/logs` route diagnostics. Request-row `查看路由`
+    now passes `traceId` to the backend exact filter instead of searching raw text.
+  - Added tests covering tail-only reads and documenting the current parser's
+    whitespace-delimited `key=value` limitation.
+- Verification:
+  - `cargo test -p codexmanager-service requestlog::trace_list -- --nocapture`
+  - `cargo check -p codexmanager-service`
+  - `pnpm run build:desktop` in `apps/`
+
 ### Template for future updates
 
 ```markdown

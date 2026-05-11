@@ -1316,6 +1316,7 @@ function LogsPageContent() {
   const [gatewayStageFilter, setGatewayStageFilter] = useState("all");
   const [traceEventFilter, setTraceEventFilter] = useState("route");
   const [traceSearch, setTraceSearch] = useState("");
+  const [traceIdFilter, setTraceIdFilter] = useState("");
   const [tracePage, setTracePage] = useState(1);
   const [tracePageSize, setTracePageSize] = useState("20");
   const pageSizeNumber = Number(pageSize) || 10;
@@ -1452,11 +1453,13 @@ function LogsPageContent() {
       "gateway-trace-list",
       traceEventFilter,
       traceSearch,
+      traceIdFilter,
       tracePage,
       tracePageSizeNumber,
     ],
     queryFn: () =>
       serviceClient.listGatewayTraceLogs({
+        traceId: traceIdFilter,
         eventFilter: traceEventFilter,
         query: traceSearch,
         page: tracePage,
@@ -2008,7 +2011,8 @@ function LogsPageContent() {
                         <button
                           className="mt-1 text-[10px] text-primary hover:underline"
                           onClick={() => {
-                            setTraceSearch(log.traceId);
+                            setTraceIdFilter(log.traceId);
+                            setTraceSearch("");
                             setTraceEventFilter("route");
                             setTracePage(1);
                             setActiveTab("route-trace");
@@ -2469,6 +2473,22 @@ function LogsPageContent() {
                 <p className="text-xs text-muted-foreground">
                   {t("展示 prompt_cache_key 路由决策和 binding 写入动作，便于排查账号漂移与缓存命中。")}
                 </p>
+                {traceIdFilter ? (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge variant="secondary" className="font-mono text-[10px]">
+                      trace_id={traceIdFilter}
+                    </Badge>
+                    <button
+                      className="text-primary hover:underline"
+                      onClick={() => {
+                        setTraceIdFilter("");
+                        setTracePage(1);
+                      }}
+                    >
+                      {t("清除 traceId")}
+                    </button>
+                  </div>
+                ) : null}
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <Input
