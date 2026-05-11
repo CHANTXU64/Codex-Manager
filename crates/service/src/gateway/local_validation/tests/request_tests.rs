@@ -363,6 +363,75 @@ fn preferred_client_prompt_cache_key_is_disabled_for_anthropic_native_requests()
     assert_eq!(actual, None);
 }
 
+#[test]
+fn route_conversation_id_uses_prompt_cache_key_without_native_anchor() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        Some("gpt-5.5"),
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(
+        actual.source,
+        super::super::super::RouteConversationSource::PromptCacheKey
+    );
+    assert!(actual.id.starts_with("pck:v1:"));
+    assert!(!actual.id.contains("client_thread_123456"));
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_when_turn_state_exists() {
+    let incoming_headers =
+        sample_incoming_headers(None, Some("turn_state_anchor"), None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        Some("gpt-5.5"),
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
+    let incoming_headers = sample_incoming_headers(Some("native-conv"), None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        Some("gpt-5.5"),
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(
+        actual.source,
+        super::super::super::RouteConversationSource::NativeConversation
+    );
+    assert_eq!(actual.id, "native-conv");
+}
+
 /// 函数 `aggregate_passthrough_applies_model_reasoning_and_service_tier_overrides_without_forcing_log_tier`
 ///
 /// 作者: gaohongshun

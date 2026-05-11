@@ -121,6 +121,7 @@ mod trace_log;
 mod upstream;
 
 pub(crate) use concurrency::current_gateway_concurrency_recommendation;
+pub(crate) use conversation_binding::RouteConversationSource;
 pub(crate) use error_log::write_gateway_error_log;
 use metrics::{
     account_inflight_count, acquire_account_inflight, begin_gateway_request,
