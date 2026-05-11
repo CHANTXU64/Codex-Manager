@@ -8,6 +8,7 @@ pub(crate) struct ConversationRoutingContext {
     pub(crate) source: RouteConversationSource,
     pub(crate) existing_binding: Option<ConversationBinding>,
     pub(crate) binding_selected: bool,
+    pub(crate) bound_account_selectable: bool,
     pub(crate) manual_preferred_account_id: Option<String>,
     pub(crate) next_thread_epoch: Option<i64>,
     pub(crate) next_thread_anchor: Option<String>,
@@ -292,6 +293,11 @@ pub(crate) fn prepare_conversation_routing_with_source(
 ) -> Option<ConversationRoutingContext> {
     let conversation_id = normalize_conversation_id(conversation_id)?;
     let existing_binding = existing_binding.cloned();
+    let bound_account_selectable = existing_binding.as_ref().is_some_and(|binding| {
+        candidates
+            .iter()
+            .any(|(account, _)| account.id == binding.account_id)
+    });
     let manual_preferred_account_id = super::manual_preferred_account()
         .filter(|account_id| rotate_to_account_id(candidates.as_mut_slice(), account_id));
     let binding_selected = if let Some(account_id) = manual_preferred_account_id.as_deref() {
@@ -314,6 +320,7 @@ pub(crate) fn prepare_conversation_routing_with_source(
         source,
         existing_binding,
         binding_selected,
+        bound_account_selectable,
         manual_preferred_account_id,
         next_thread_epoch,
         next_thread_anchor,
@@ -436,7 +443,9 @@ pub(crate) fn record_conversation_binding_terminal_response(
             )
             .map(|_| ())
             .map_err(|err| format!("touch conversation binding failed: {err}")),
-        Some(_) if routing.source.is_prompt_cache_key() && routing.binding_selected => Ok(()),
+        Some(_) if routing.source.is_prompt_cache_key() && routing.bound_account_selectable => {
+            Ok(())
+        }
         Some(binding) if status_code < 400 => {
             let (thread_epoch, thread_anchor) = if routing.source.is_prompt_cache_key() {
                 (binding.thread_epoch + 1, binding.thread_anchor.clone())
@@ -766,6 +775,91 @@ mod tests {
         assert_eq!(actual.account_id, "acc-1");
         assert_eq!(actual.thread_anchor, "pck:v1:abcdef");
         assert_eq!(actual.thread_epoch, 1);
+    }
+
+    #[test]
+    fn prompt_cache_manual_preferred_account_does_not_rebind_when_bound_account_is_selectable() {
+        let storage = Storage::open_in_memory().expect("open in memory");
+        storage.init().expect("init schema");
+        let mut binding = sample_binding("acc-1");
+        binding.conversation_id = "pck:v1:abcdef".to_string();
+        binding.thread_anchor = "pck:v1:abcdef".to_string();
+        storage
+            .upsert_conversation_binding(&binding)
+            .expect("seed binding");
+        let mut candidates = vec![
+            (sample_account("acc-1", 0), sample_token("acc-1")),
+            (sample_account("acc-2", 1), sample_token("acc-2")),
+        ];
+        let mut routing = prepare_conversation_routing_with_source(
+            "key-hash-1",
+            Some("pck:v1:abcdef"),
+            Some(&binding),
+            &mut candidates,
+            RouteConversationSource::PromptCacheKey,
+        )
+        .expect("routing context");
+        routing.manual_preferred_account_id = Some("acc-2".to_string());
+        routing.binding_selected = false;
+        routing.bound_account_selectable = true;
+
+        record_conversation_binding_terminal_response(
+            &storage,
+            Some(&routing),
+            &sample_account("acc-2", 1),
+            Some("gpt-5.5"),
+            200,
+        )
+        .expect("record manual preferred success");
+
+        let actual = storage
+            .get_conversation_binding("key-hash-1", "pck:v1:abcdef")
+            .expect("load binding")
+            .expect("binding exists");
+        assert_eq!(actual.account_id, "acc-1");
+        assert_eq!(actual.thread_anchor, "pck:v1:abcdef");
+        assert_eq!(actual.thread_epoch, 1);
+    }
+
+    #[test]
+    fn prompt_cache_manual_preferred_account_rebinds_when_bound_account_is_not_selectable() {
+        let storage = Storage::open_in_memory().expect("open in memory");
+        storage.init().expect("init schema");
+        let mut binding = sample_binding("acc-1");
+        binding.conversation_id = "pck:v1:abcdef".to_string();
+        binding.thread_anchor = "pck:v1:abcdef".to_string();
+        storage
+            .upsert_conversation_binding(&binding)
+            .expect("seed binding");
+        let mut candidates = vec![(sample_account("acc-2", 0), sample_token("acc-2"))];
+        let mut routing = prepare_conversation_routing_with_source(
+            "key-hash-1",
+            Some("pck:v1:abcdef"),
+            Some(&binding),
+            &mut candidates,
+            RouteConversationSource::PromptCacheKey,
+        )
+        .expect("routing context");
+        routing.manual_preferred_account_id = Some("acc-2".to_string());
+        routing.binding_selected = false;
+        assert!(!routing.bound_account_selectable);
+
+        record_conversation_binding_terminal_response(
+            &storage,
+            Some(&routing),
+            &candidates[0].0,
+            Some("gpt-5.5"),
+            200,
+        )
+        .expect("record stale manual preferred success");
+
+        let actual = storage
+            .get_conversation_binding("key-hash-1", "pck:v1:abcdef")
+            .expect("load binding")
+            .expect("binding exists");
+        assert_eq!(actual.account_id, "acc-2");
+        assert_eq!(actual.thread_anchor, "pck:v1:abcdef");
+        assert_eq!(actual.thread_epoch, 2);
     }
 
     #[test]

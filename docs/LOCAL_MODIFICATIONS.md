@@ -122,8 +122,8 @@ Preserve these behaviors:
 Current intended behavior:
 
 - Existing binding account succeeds: touch the binding.
-- Existing binding was selected, but execution temporarily failed over to another account and succeeded: do **not** rebind.
-- Existing binding was not selected because its account is stale / disabled / absent from candidates, and another account succeeds: allow rebind.
+- Existing binding account remains selectable, but execution uses another account because of manual preferred account or temporary failover: do **not** rebind.
+- Existing binding account is stale / disabled / absent from candidates, and another account succeeds: allow rebind.
 - No binding + `PromptCacheKey`: allow initial binding create.
 - No binding + `PromptCacheKeyExistingOnly`: do not create initial binding.
 
@@ -132,7 +132,8 @@ Current intended behavior:
 There are two different scenarios that must not be confused:
 
 1. Temporary failover: preserving the original account maximizes cache continuity.
-2. Stale binding: if the old account is no longer selectable, refusing to rebind would make the binding permanently stale.
+2. Manual preferred account: it may affect the current attempt order, but must not silently migrate a hot pck binding while the bound account remains selectable.
+3. Stale binding: if the old account is no longer selectable, refusing to rebind would make the binding permanently stale.
 
 #### Merge protection
 
@@ -308,7 +309,7 @@ Before merging this branch or resolving conflicts, verify these exact items:
 - [ ] `resolve_attempt_thread(...)` returns `None` for all prompt-cache sources.
 - [ ] `conversation_binding_for_thread_anchor(...)` excludes all prompt-cache sources.
 - [ ] `previous_response_id + prompt_cache_key` uses `PromptCacheKeyExistingOnly`.
-- [ ] `record_conversation_binding_terminal_response(...)` preserves temporary-failover no-rebind and stale-binding rebind behavior.
+- [ ] `record_conversation_binding_terminal_response(...)` preserves temporary-failover/manual-preferred no-rebind while the bound account remains selectable, and stale-binding rebind when it is not selectable.
 - [ ] The pck route id hash does not include model.
 - [ ] The pck route id is never written into upstream headers/body as a real conversation/thread/session id.
 - [ ] Prompt-cache route binding still uses precise official responses path detection.
@@ -339,6 +340,23 @@ Before merging this branch or resolving conflicts, verify these exact items:
   - `cargo test -p codexmanager-service existing_only_prompt_cache_binding_is_not_used_as_fallback_thread_anchor -- --nocapture`
   - `cargo check -p codexmanager-service`
   - `git diff --check`
+
+### 2026-05-11 20:56 CST - this commit
+
+- Modified files:
+  - `crates/service/src/gateway/routing/conversation_binding.rs`
+  - `docs/LOCAL_MODIFICATIONS.md`
+  - `docs/report/prompt-cache-route-binding-pr1.md`
+- Summary:
+  - Added `bound_account_selectable` to distinguish “binding account was not selected” from “binding account is no longer selectable”.
+  - Changed pck rebind guard so manual preferred account cannot silently migrate an existing pck binding while the bound account is still selectable.
+  - Added tests for manual preferred no-rebind and stale manual-preferred rebind behavior.
+- Why it matters:
+  - Manual account preference should affect current attempt ordering, not destroy cache affinity for an already-hot prompt-cache binding.
+- Merge protection:
+  - Preserve `bound_account_selectable` semantics; do not use `binding_selected` alone to decide stale pck rebind.
+- Verification:
+  - `cargo test -p codexmanager-service prompt_cache_manual_preferred -- --nocapture`
 
 ### Template for future updates
 

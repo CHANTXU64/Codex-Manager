@@ -71,8 +71,8 @@
   - `allows_initial_binding_create()`：`PromptCacheKeyExistingOnly` 返回 false。
 - rebind 逻辑改为：
   - `binding.account_id == account.id`：touch。
-  - `source.is_prompt_cache_key() && routing.binding_selected`：不 rebind，用于防止临时 failover 漂移。
-  - `source.is_prompt_cache_key() && !routing.binding_selected && status_code < 400`：允许 rebind，用于 stale binding 自愈。
+  - `source.is_prompt_cache_key() && routing.bound_account_selectable`：不 rebind，用于防止临时 failover 或 manual preferred account 造成缓存线程漂移。
+  - `source.is_prompt_cache_key() && !routing.bound_account_selectable && status_code < 400`：允许 rebind，用于 stale binding 自愈。
   - `None && source.allows_initial_binding_create() && status_code < 400`：才允许创建新 binding。
 
 新增/调整测试：
@@ -126,8 +126,8 @@
 7. 成功后：
    - 无 binding：创建 pck binding。
    - 绑定账号成功：touch。
-   - 绑定账号本轮已选中但其他账号 failover 成功：不 rebind。
-   - 绑定账号本轮未选中且其他账号成功：允许 rebind。
+   - 绑定账号本轮仍可选但其他账号因 failover 或 manual preferred 成功：不 rebind。
+   - 绑定账号本轮不可选且其他账号成功：允许 rebind。
 
 ### 有 `previous_response_id + prompt_cache_key` 的请求
 
@@ -187,8 +187,8 @@ git diff --check
    - `PromptCacheKeyExistingOnly`
 3. `PromptCacheKeyExistingOnly` 必须禁止创建初始 binding。
 4. `record_conversation_binding_terminal_response(...)` 里必须保留：
-   - 选中绑定账号后 failover 成功不 rebind。
-   - 未选中绑定账号时允许 stale binding rebind。
+   - 绑定账号仍可选时，manual preferred / failover 到其他账号成功不 rebind。
+   - 绑定账号不可选时允许 stale binding rebind。
 5. `conversation_binding_for_thread_anchor(...)` 必须排除所有 prompt-cache source。
 6. `resolve_attempt_thread(...)` 必须对所有 prompt-cache source 返回 `None`。
 7. `previous_response_id + prompt_cache_key` 不能直接走普通 route strategy，也不能创建新 pck binding。
@@ -199,6 +199,23 @@ git diff --check
 ## 后续修改记录
 
 > 后续如果继续修改 PR #1，请按下面格式追加，不要覆盖前文。
+
+### 2026-05-11 20:56 CST - this commit
+
+- 修改文件：
+  - `crates/service/src/gateway/routing/conversation_binding.rs`
+  - `docs/LOCAL_MODIFICATIONS.md`
+  - `docs/report/prompt-cache-route-binding-pr1.md`
+- 修改内容：
+  - 新增 `bound_account_selectable`，把“binding 没被选中”和“binding 账号不可选”分开。
+  - pck rebind 判断改为：只要原绑定账号仍可选，manual preferred account 成功也不迁移 binding；只有原绑定账号不可选时才允许 stale binding rebind。
+  - 补充 manual preferred no-rebind / stale rebind 测试。
+- 原因：
+  - 手动指定账号只能影响本次尝试顺序，不能静默破坏已有缓存线程亲和。
+- 验证：
+  - `cargo test -p codexmanager-service prompt_cache_manual_preferred -- --nocapture`
+- 合并注意：
+  - 不要再只用 `binding_selected` 判断 pck binding 是否 stale；必须看 `bound_account_selectable`。
 
 ### YYYY-MM-DD HH:mm CST - <commit 或未提交>
 
