@@ -217,6 +217,20 @@ fn sample_request_metadata(prompt_cache_key: Option<&str>) -> ParsedRequestMetad
     }
 }
 
+fn sample_request_metadata_with_previous_response(
+    prompt_cache_key: Option<&str>,
+    previous_response_id: Option<&str>,
+) -> ParsedRequestMetadata {
+    ParsedRequestMetadata {
+        prompt_cache_key: prompt_cache_key.map(str::to_string),
+        has_prompt_cache_key: prompt_cache_key.is_some(),
+        has_previous_response_id: previous_response_id
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        ..Default::default()
+    }
+}
+
 fn sample_incoming_headers(
     conversation_id: Option<&str>,
     turn_state: Option<&str>,
@@ -373,7 +387,6 @@ fn route_conversation_id_uses_prompt_cache_key_without_native_anchor() {
         crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
         "/v1/responses",
         "platform-key-hash",
-        Some("gpt-5.5"),
         &incoming_headers,
         &initial_request_meta,
         &client_request_meta,
@@ -399,7 +412,6 @@ fn route_conversation_id_does_not_use_prompt_cache_key_when_turn_state_exists() 
         crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
         "/v1/responses",
         "platform-key-hash",
-        Some("gpt-5.5"),
         &incoming_headers,
         &initial_request_meta,
         &client_request_meta,
@@ -418,7 +430,6 @@ fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
         crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
         "/v1/responses",
         "platform-key-hash",
-        Some("gpt-5.5"),
         &incoming_headers,
         &initial_request_meta,
         &client_request_meta,
@@ -430,6 +441,61 @@ fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
         super::super::super::RouteConversationSource::NativeConversation
     );
     assert_eq!(actual.id, "native-conv");
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_when_previous_response_id_exists() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata_with_previous_response(
+        Some("client_thread_123456"),
+        Some("resp_previous"),
+    );
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_for_non_responses_path_prefix() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responsesxxx",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn prompt_cache_route_id_is_not_split_by_model() {
+    let first = prompt_cache_route_id(
+        "platform-key-hash",
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "client_thread_123456",
+    );
+    let second = prompt_cache_route_id(
+        "platform-key-hash",
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "client_thread_123456",
+    );
+
+    assert_eq!(first, second);
 }
 
 /// 函数 `aggregate_passthrough_applies_model_reasoning_and_service_tier_overrides_without_forcing_log_tier`

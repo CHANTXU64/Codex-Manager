@@ -422,6 +422,7 @@ pub(crate) fn record_conversation_binding_terminal_response(
             )
             .map(|_| ())
             .map_err(|err| format!("touch conversation binding failed: {err}")),
+        Some(_) if routing.source == RouteConversationSource::PromptCacheKey => Ok(()),
         Some(binding) if status_code < 400 => {
             let (thread_epoch, thread_anchor) = if routing.source
                 == RouteConversationSource::PromptCacheKey
@@ -689,6 +690,68 @@ mod tests {
             .expect("binding exists");
         assert_eq!(created.account_id, "acc-1");
         assert_eq!(created.thread_anchor, "pck:v1:abcdef");
+    }
+
+    #[test]
+    fn prompt_cache_route_binding_rotates_bound_account_first() {
+        let mut binding = sample_binding("acc-2");
+        binding.conversation_id = "pck:v1:abcdef".to_string();
+        binding.thread_anchor = "pck:v1:abcdef".to_string();
+        let mut candidates = vec![
+            (sample_account("acc-1", 0), sample_token("acc-1")),
+            (sample_account("acc-2", 1), sample_token("acc-2")),
+        ];
+
+        let routing = prepare_conversation_routing_with_source(
+            "key-hash-1",
+            Some("pck:v1:abcdef"),
+            Some(&binding),
+            &mut candidates,
+            RouteConversationSource::PromptCacheKey,
+        )
+        .expect("routing context");
+
+        assert!(routing.binding_selected);
+        assert_eq!(candidates[0].0.id, "acc-2");
+        assert_eq!(candidates[1].0.id, "acc-1");
+    }
+
+    #[test]
+    fn prompt_cache_route_binding_does_not_rebind_after_failover_success() {
+        let storage = Storage::open_in_memory().expect("open in memory");
+        storage.init().expect("init schema");
+        let mut binding = sample_binding("acc-1");
+        binding.conversation_id = "pck:v1:abcdef".to_string();
+        binding.thread_anchor = "pck:v1:abcdef".to_string();
+        storage
+            .upsert_conversation_binding(&binding)
+            .expect("seed binding");
+        let mut candidates = vec![(sample_account("acc-2", 0), sample_token("acc-2"))];
+        let routing = prepare_conversation_routing_with_source(
+            "key-hash-1",
+            Some("pck:v1:abcdef"),
+            Some(&binding),
+            &mut candidates,
+            RouteConversationSource::PromptCacheKey,
+        )
+        .expect("routing context");
+
+        record_conversation_binding_terminal_response(
+            &storage,
+            Some(&routing),
+            &candidates[0].0,
+            Some("gpt-5.5"),
+            200,
+        )
+        .expect("record failover success");
+
+        let actual = storage
+            .get_conversation_binding("key-hash-1", "pck:v1:abcdef")
+            .expect("load binding")
+            .expect("binding exists");
+        assert_eq!(actual.account_id, "acc-1");
+        assert_eq!(actual.thread_anchor, "pck:v1:abcdef");
+        assert_eq!(actual.thread_epoch, 1);
     }
 
     /// 函数 `apply_candidate_rotation_reports_binding_source_when_binding_selected`

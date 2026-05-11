@@ -1,4 +1,24 @@
-use super::{validate_text_input_limit_for_path, MAX_TEXT_INPUT_CHARS};
+use super::{parse_request_metadata, validate_text_input_limit_for_path, MAX_TEXT_INPUT_CHARS};
+
+#[test]
+fn parse_request_metadata_detects_previous_response_id() {
+    let body = br#"{"model":"gpt-5.5","prompt_cache_key":"client_thread","previous_response_id":"resp_previous"}"#;
+
+    let actual = parse_request_metadata(body);
+
+    assert!(actual.has_prompt_cache_key);
+    assert_eq!(actual.prompt_cache_key.as_deref(), Some("client_thread"));
+    assert!(actual.has_previous_response_id);
+}
+
+#[test]
+fn parse_request_metadata_ignores_blank_previous_response_id() {
+    let body = br#"{"prompt_cache_key":"client_thread","previous_response_id":"   "}"#;
+
+    let actual = parse_request_metadata(body);
+
+    assert!(!actual.has_previous_response_id);
+}
 
 #[test]
 fn responses_text_limit_allows_small_payloads() {

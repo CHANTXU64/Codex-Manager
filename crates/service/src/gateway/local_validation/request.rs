@@ -1137,7 +1137,7 @@ struct RouteConversationId {
 
 fn prompt_cache_route_binding_enabled(protocol_type: &str, normalized_path: &str) -> bool {
     protocol_type == crate::apikey_profile::PROTOCOL_OPENAI_COMPAT
-        && normalized_path.starts_with("/v1/responses")
+        && super::super::official_responses_http::is_responses_path(normalized_path)
 }
 
 fn normalized_prompt_cache_key_for_route<'a>(
@@ -1155,16 +1155,11 @@ fn normalized_prompt_cache_key_for_route<'a>(
 fn prompt_cache_route_id(
     platform_key_hash: &str,
     protocol_type: &str,
-    model: Option<&str>,
     prompt_cache_key: &str,
 ) -> String {
-    let model = model
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("-");
     let digest = Sha256::digest(
         format!(
-            "pck:v1\0{platform_key_hash}\0{protocol_type}\0{model}\0{}",
+            "pck:v1\0{platform_key_hash}\0{protocol_type}\0{}",
             prompt_cache_key.trim()
         )
         .as_bytes(),
@@ -1180,7 +1175,6 @@ fn resolve_route_conversation_id(
     protocol_type: &str,
     normalized_path: &str,
     platform_key_hash: &str,
-    model: Option<&str>,
     incoming_headers: &super::super::IncomingHeaderSnapshot,
     initial_request_meta: &ParsedRequestMetadata,
     client_request_meta: &ParsedRequestMetadata,
@@ -1196,7 +1190,10 @@ fn resolve_route_conversation_id(
         });
     }
 
-    if incoming_headers.turn_state().is_some() {
+    if incoming_headers.turn_state().is_some()
+        || initial_request_meta.has_previous_response_id
+        || client_request_meta.has_previous_response_id
+    {
         return None;
     }
 
@@ -1205,12 +1202,7 @@ fn resolve_route_conversation_id(
             normalized_prompt_cache_key_for_route(initial_request_meta, client_request_meta)
         {
             return Some(RouteConversationId {
-                id: prompt_cache_route_id(
-                    platform_key_hash,
-                    protocol_type,
-                    model,
-                    prompt_cache_key,
-                ),
+                id: prompt_cache_route_id(platform_key_hash, protocol_type, prompt_cache_key),
                 source: super::super::RouteConversationSource::PromptCacheKey,
             });
         }
@@ -1598,9 +1590,6 @@ pub(super) fn build_local_validation_result(
         effective_protocol_type,
         normalized_path.as_str(),
         api_key.key_hash.as_str(),
-        effective_model
-            .as_deref()
-            .or(initial_request_meta.model.as_deref()),
         &incoming_headers,
         &initial_request_meta,
         &client_request_meta,
