@@ -23,6 +23,15 @@ pub(crate) enum RouteConversationSource {
 }
 
 impl RouteConversationSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NativeConversation => "native_conversation",
+            Self::StickyFallback => "sticky_fallback",
+            Self::PromptCacheKey => "prompt_cache_key",
+            Self::PromptCacheKeyExistingOnly => "prompt_cache_key_existing_only",
+        }
+    }
+
     pub(crate) fn is_prompt_cache_key(self) -> bool {
         matches!(
             self,
@@ -425,25 +434,71 @@ pub(crate) fn record_conversation_binding_terminal_response(
     account: &Account,
     model: Option<&str>,
     status_code: u16,
+    trace_id: Option<&str>,
 ) -> Result<(), String> {
     let Some(routing) = routing else {
         return Ok(());
     };
     let attempt_thread = resolve_attempt_thread(Some(routing), account);
 
+    let log_record = |action: &str,
+                      thread_epoch: Option<i64>,
+                      thread_anchor: Option<&str>,
+                      reason: Option<&str>| {
+        if let Some(trace_id) = trace_id {
+            super::trace_log::log_conversation_binding_record(
+                super::trace_log::ConversationBindingRecordLog {
+                    trace_id,
+                    route_source: routing.source.as_str(),
+                    route_id: routing.conversation_id.as_str(),
+                    action,
+                    account_id: account.id.as_str(),
+                    status_code,
+                    existing_account_id: routing
+                        .existing_binding
+                        .as_ref()
+                        .map(|binding| binding.account_id.as_str()),
+                    binding_selected: routing.binding_selected,
+                    bound_account_selectable: routing.bound_account_selectable,
+                    manual_preferred_account_id: routing.manual_preferred_account_id.as_deref(),
+                    thread_epoch,
+                    thread_anchor,
+                    reason,
+                },
+            );
+        }
+    };
+
     let now = now_ts();
     match routing.existing_binding.as_ref() {
-        Some(binding) if binding.account_id == account.id => storage
-            .touch_conversation_binding(
-                routing.platform_key_hash.as_str(),
-                routing.conversation_id.as_str(),
-                account.id.as_str(),
-                model,
-                now,
-            )
-            .map(|_| ())
-            .map_err(|err| format!("touch conversation binding failed: {err}")),
-        Some(_) if routing.source.is_prompt_cache_key() && routing.bound_account_selectable => {
+        Some(binding) if binding.account_id == account.id => {
+            storage
+                .touch_conversation_binding(
+                    routing.platform_key_hash.as_str(),
+                    routing.conversation_id.as_str(),
+                    account.id.as_str(),
+                    model,
+                    now,
+                )
+                .map(|_| ())
+                .map_err(|err| format!("touch conversation binding failed: {err}"))?;
+            log_record(
+                "touch_existing",
+                Some(binding.thread_epoch),
+                Some(binding.thread_anchor.as_str()),
+                None,
+            );
+            Ok(())
+        }
+        Some(binding)
+            if routing.source.is_prompt_cache_key() && routing.bound_account_selectable =>
+        {
+            log_record(
+                "skip_prompt_cache_preserve_selectable_binding",
+                Some(binding.thread_epoch),
+                Some(binding.thread_anchor.as_str()),
+                Some("bound_account_selectable"),
+            );
             Ok(())
         }
         Some(binding) if status_code < 400 => {
@@ -465,7 +520,14 @@ pub(crate) fn record_conversation_binding_terminal_response(
             next.last_used_at = now;
             storage
                 .upsert_conversation_binding(&next)
-                .map_err(|err| format!("rebind conversation binding failed: {err}"))
+                .map_err(|err| format!("rebind conversation binding failed: {err}"))?;
+            log_record(
+                "rebind_existing",
+                Some(next.thread_epoch),
+                Some(next.thread_anchor.as_str()),
+                next.last_switch_reason.as_deref(),
+            );
+            Ok(())
         }
         None if status_code < 400 && routing.source.allows_initial_binding_create() => {
             let (thread_epoch, thread_anchor) = if routing.source.is_prompt_cache_key() {
@@ -490,9 +552,39 @@ pub(crate) fn record_conversation_binding_terminal_response(
             };
             storage
                 .upsert_conversation_binding(&binding)
-                .map_err(|err| format!("create conversation binding failed: {err}"))
+                .map_err(|err| format!("create conversation binding failed: {err}"))?;
+            log_record(
+                "create_initial",
+                Some(binding.thread_epoch),
+                Some(binding.thread_anchor.as_str()),
+                None,
+            );
+            Ok(())
         }
-        _ => Ok(()),
+        None if routing.source == RouteConversationSource::PromptCacheKeyExistingOnly => {
+            log_record(
+                "skip_existing_only_without_binding",
+                None,
+                None,
+                Some("previous_response_id_without_existing_binding"),
+            );
+            Ok(())
+        }
+        _ => {
+            log_record(
+                "skip_no_successful_binding_update",
+                routing
+                    .existing_binding
+                    .as_ref()
+                    .map(|binding| binding.thread_epoch),
+                routing
+                    .existing_binding
+                    .as_ref()
+                    .map(|binding| binding.thread_anchor.as_str()),
+                Some("non_success_status_or_binding_create_disabled"),
+            );
+            Ok(())
+        }
     }
 }
 
@@ -700,6 +792,7 @@ mod tests {
             &candidates[0].0,
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("record prompt cache route binding");
 
@@ -765,6 +858,7 @@ mod tests {
             &candidates[1].0,
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("record failover success");
 
@@ -809,6 +903,7 @@ mod tests {
             &sample_account("acc-2", 1),
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("record manual preferred success");
 
@@ -850,6 +945,7 @@ mod tests {
             &candidates[0].0,
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("record stale manual preferred success");
 
@@ -889,6 +985,7 @@ mod tests {
             &candidates[0].0,
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("record stale rebind success");
 
@@ -921,6 +1018,7 @@ mod tests {
             &candidates[0].0,
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("record existing-only success");
 
@@ -998,6 +1096,7 @@ mod tests {
             &candidates[0].0,
             Some("gpt-5.4"),
             200,
+            None,
         )
         .expect("create binding");
 
@@ -1020,6 +1119,7 @@ mod tests {
             &sample_account("acc-2", 0),
             Some("gpt-5.5"),
             200,
+            None,
         )
         .expect("rebind binding");
 

@@ -3,11 +3,11 @@
 > 这是 Codex-Manager fork/本地分支的本地修改保护文档。后续任何本地改动都必须写到这里，供 AI Agent 在 rebase、merge、冲突处理、PR 合并前确认，不要因为不了解背景误删功能。
 
 - Repository: `CHANTXU64/Codex-Manager`
-- Current branch: `fix/prompt-cache-route-binding`
-- PR: https://github.com/CHANTXU64/Codex-Manager/pull/1
-- Current local base for this branch: `b1604e72 fix: 让路由优先按缓存线程固定账号`
-- Latest documented head: `8093e7e6 fix: keep manual preferred from migrating cache binding` + uncommitted test/documentation updates
-- Last updated: 2026-05-11 21:30 CST
+- Current branch: `fix/prompt-cache-route-logging`
+- PR: pending
+- Current local base for this branch: `5029131b Merge pull request #1 from CHANTXU64/fix/prompt-cache-route-binding`
+- Latest documented head: uncommitted prompt-cache route logging updates
+- Last updated: 2026-05-11 22:10 CST
 
 ## Merge rules for AI agents
 
@@ -386,6 +386,38 @@ Before merging this branch or resolving conflicts, verify these exact items:
   - Preserve the `gateway_logs::prompt_cache` tests when rebasing or resolving conflicts.
 - Verification:
   - `cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture`
+
+### 2026-05-11 22:10 CST - prompt-cache route logging
+
+- Branch: `fix/prompt-cache-route-logging`
+- Modified files:
+  - `crates/service/src/gateway/local_validation/request.rs`
+  - `crates/service/src/gateway/observability/trace_log.rs`
+  - `crates/service/src/gateway/routing/conversation_binding.rs`
+  - `crates/service/src/gateway/upstream/proxy_pipeline/candidate_executor.rs`
+  - `crates/service/tests/gateway_logs/prompt_cache.rs`
+  - `docs/LOCAL_MODIFICATIONS.md`
+- Summary:
+  - Added `ROUTE_CONVERSATION_DECISION` trace entries for route source,
+    pck route id fingerprint, existing binding account/epoch, incoming
+    conversation/turn_state flags, prompt-cache key presence, and effective
+    thread-anchor fingerprint.
+  - Added `CONVERSATION_BINDING_RECORD` trace entries for binding actions:
+    create, touch, rebind, preserve selectable pck binding, and existing-only
+    no-create skips.
+  - Prompt-cache-specific route/binding trace entries are flushed immediately
+    to `gateway-trace.log`, so cache routing drift can be diagnosed even when
+    the request succeeds.
+  - Extended gateway prompt-cache regression test to assert these trace events
+    are actually written by the real HTTP gateway pipeline.
+- Merge protection:
+  - Preserve `ROUTE_CONVERSATION_DECISION` and `CONVERSATION_BINDING_RECORD`
+    fields when refactoring routing/logging.
+  - Do not log raw `prompt_cache_key`; only log fingerprints/booleans.
+- Verification:
+  - `cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture`
+  - `cargo test -p codexmanager-service prompt_cache -- --nocapture`
+  - `cargo check -p codexmanager-service`
 
 ### Template for future updates
 
