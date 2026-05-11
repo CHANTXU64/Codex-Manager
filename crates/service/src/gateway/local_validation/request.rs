@@ -1606,9 +1606,13 @@ pub(super) fn build_local_validation_result(
         route_conversation_id.as_deref(),
     )
     .map_err(|err| LocalValidationError::new(500, err))?;
-    let binding_for_thread_anchor = if route_conversation_source
-        == Some(super::super::RouteConversationSource::PromptCacheKey)
-    {
+    let binding_for_thread_anchor = if route_conversation_source.is_some_and(|source| {
+        matches!(
+            source,
+            super::super::RouteConversationSource::PromptCacheKey
+                | super::super::RouteConversationSource::PromptCacheKeyExistingOnly
+        )
+    }) {
         None
     } else {
         conversation_binding.as_ref()
