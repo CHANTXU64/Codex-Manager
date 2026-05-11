@@ -6,8 +6,8 @@
 - Current branch: `fix/prompt-cache-route-binding`
 - PR: https://github.com/CHANTXU64/Codex-Manager/pull/1
 - Current local base for this branch: `b1604e72 fix: 让路由优先按缓存线程固定账号`
-- Latest documented head: `1f6091a9 docs: record prompt cache route binding changes`
-- Last updated: 2026-05-11 20:44:26 CST
+- Latest documented head: `8093e7e6 fix: keep manual preferred from migrating cache binding` + uncommitted test/documentation updates
+- Last updated: 2026-05-11 21:30 CST
 
 ## Merge rules for AI agents
 
@@ -112,7 +112,9 @@ Preserve these behaviors:
 ### 3. Prompt-cache failover and stale-binding behavior
 
 - Status: active
-- Commit: `4c8d5564 fix: handle previous response cache routing`
+- Commits:
+  - `4c8d5564 fix: handle previous response cache routing`
+  - `8093e7e6 fix: keep manual preferred from migrating cache binding`
 - File: `crates/service/src/gateway/routing/conversation_binding.rs`
 
 #### What changed
@@ -129,7 +131,7 @@ Current intended behavior:
 
 #### Why it matters
 
-There are two different scenarios that must not be confused:
+There are three different scenarios that must not be confused:
 
 1. Temporary failover: preserving the original account maximizes cache continuity.
 2. Manual preferred account: it may affect the current attempt order, but must not silently migrate a hot pck binding while the bound account remains selectable.
@@ -284,16 +286,21 @@ Run these before merge/rebase completion:
 ```bash
 cargo test -p codexmanager-service route_conversation_id -- --nocapture
 cargo test -p codexmanager-service prompt_cache_route_binding -- --nocapture
+cargo test -p codexmanager-service prompt_cache_manual_preferred -- --nocapture
+cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture
 cargo test -p codexmanager-service parse_request_metadata -- --nocapture
 cargo test -p codexmanager-service existing_only_prompt_cache_binding_is_not_used_as_fallback_thread_anchor -- --nocapture
 cargo check -p codexmanager-service
 git diff --check
+
 ```
 
 Latest known local result:
 
 - `route_conversation_id`: 5 passed
 - `prompt_cache_route_binding`: 5 passed
+- `prompt_cache_manual_preferred`: 2 passed
+- `gateway_logs prompt_cache`: 6 passed
 - `parse_request_metadata`: 2 passed
 - `existing_only_prompt_cache_binding_is_not_used_as_fallback_thread_anchor`: 1 passed
 - `cargo check`: passed
@@ -357,6 +364,28 @@ Before merging this branch or resolving conflicts, verify these exact items:
   - Preserve `bound_account_selectable` semantics; do not use `binding_selected` alone to decide stale pck rebind.
 - Verification:
   - `cargo test -p codexmanager-service prompt_cache_manual_preferred -- --nocapture`
+  - `cargo test -p codexmanager-service prompt_cache -- --nocapture`
+  - `cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture`
+
+### 2026-05-11 21:30 CST - uncommitted local test expansion
+
+- Modified files:
+  - `crates/service/tests/gateway_logs.rs`
+  - `crates/service/tests/gateway_logs/prompt_cache.rs`
+  - `docs/LOCAL_MODIFICATIONS.md`
+- Summary:
+  - Added HTTP gateway-level prompt-cache route binding regression tests.
+  - Covered existing binding reuse for `previous_response_id + prompt_cache_key`.
+  - Covered no initial binding create for existing-only pck requests.
+  - Covered precise path filtering for `/v1/responses?query` vs `/v1/responsesxxx`.
+  - Covered manual preferred account no-migration behavior at proxy-pipeline level.
+  - Covered `x-codex-turn-state` disabling pck route selection even with an existing binding.
+- Why it matters:
+  - The prompt-cache logic is now protected above helper/unit level by real gateway HTTP requests and mock upstream captures.
+- Merge protection:
+  - Preserve the `gateway_logs::prompt_cache` tests when rebasing or resolving conflicts.
+- Verification:
+  - `cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture`
 
 ### Template for future updates
 
