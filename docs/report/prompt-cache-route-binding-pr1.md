@@ -5,8 +5,9 @@
 - PR: https://github.com/CHANTXU64/Codex-Manager/pull/1
 - 分支：`fix/prompt-cache-route-binding`
 - 基线提交：`b1604e72 fix: 让路由优先按缓存线程固定账号`
-- 当前最新提交：`1afc72fd test: cover existing-only cache thread anchor`
+- 当前最新提交：`1f6091a9 docs: record prompt cache route binding changes`
 - 记录时间：2026-05-11 20:40:27 CST
+- 总入口文档：`docs/LOCAL_MODIFICATIONS.md`（后续所有本地修改优先追加到该文件）
 
 ## 合并时必须保留的原则
 
