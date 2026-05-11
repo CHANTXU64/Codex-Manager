@@ -419,6 +419,39 @@ Before merging this branch or resolving conflicts, verify these exact items:
   - `cargo test -p codexmanager-service prompt_cache -- --nocapture`
   - `cargo check -p codexmanager-service`
 
+### 2026-05-11 22:35 CST - web route trace diagnostics
+
+- Branch: `fix/prompt-cache-route-logging`
+- Modified files:
+  - `crates/core/src/rpc/types.rs`
+  - `crates/service/src/requestlog/requestlog_trace_list.rs`
+  - `crates/service/src/requestlog/mod.rs`
+  - `crates/service/src/rpc_dispatch/requestlog.rs`
+  - `crates/service/src/lib.rs`
+  - `apps/src/types/request-log.ts`
+  - `apps/src/lib/api/normalize.ts`
+  - `apps/src/lib/api/service-client.ts`
+  - `apps/src/lib/api/transport-web-commands.ts`
+  - `apps/src/app/logs/page.tsx`
+- Summary:
+  - Added `requestlog/trace_list` RPC and frontend command `service_requestlog_trace_list`.
+  - The RPC reads `gateway-trace.log`, parses key-value trace entries, and supports
+    `traceId`, `eventFilter`, `query`, `page`, and `pageSize` filters.
+  - Added `/logs` tab `路由诊断` with route-event filter, search, pagination,
+    raw-copy, and key-field badges.
+  - Added `查看路由` shortcut on each request-log row to open the route trace tab
+    filtered by that request's `traceId`.
+- Merge protection:
+  - Keep raw `prompt_cache_key` out of the frontend payload; route diagnostics should
+    expose only booleans and fingerprints already written to trace lines.
+  - Keep the default trace event filter as `route` so the tab focuses on
+    `ROUTE_CONVERSATION_DECISION` and `CONVERSATION_BINDING_RECORD`.
+- Verification:
+  - `cargo test -p codexmanager-service parses_key_value_trace_line -- --nocapture`
+  - `cargo test -p codexmanager-service bounds_trace_page_size -- --nocapture`
+  - `cargo check -p codexmanager-service`
+  - `pnpm run build:desktop` in `apps/`
+
 ### Template for future updates
 
 ```markdown

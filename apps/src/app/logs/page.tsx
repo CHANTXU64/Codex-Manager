@@ -62,6 +62,7 @@ import {
   AggregateApi,
   ApiKey,
   GatewayErrorLog,
+  GatewayTraceLogEntry,
   RequestLog,
   RequestLogFilterSummary,
   RequestLogListResult,
@@ -69,7 +70,7 @@ import {
 } from "@/types";
 
 type StatusFilter = "all" | "2xx" | "4xx" | "5xx";
-type LogsTab = "requests" | "gateway-errors";
+type LogsTab = "requests" | "gateway-errors" | "route-trace";
 type TimeRangePreset = "all" | "30m" | "2h" | "24h" | "today" | "custom";
 type TranslateFn = (message: string, values?: Record<string, string | number>) => string;
 
@@ -1313,8 +1314,13 @@ function LogsPageContent() {
   const [clearGatewayConfirmOpen, setClearGatewayConfirmOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<LogsTab>("requests");
   const [gatewayStageFilter, setGatewayStageFilter] = useState("all");
+  const [traceEventFilter, setTraceEventFilter] = useState("route");
+  const [traceSearch, setTraceSearch] = useState("");
+  const [tracePage, setTracePage] = useState(1);
+  const [tracePageSize, setTracePageSize] = useState("20");
   const pageSizeNumber = Number(pageSize) || 10;
   const gatewayPageSizeNumber = Number(gatewayPageSize) || 10;
+  const tracePageSizeNumber = Number(tracePageSize) || 20;
   const startTs = useMemo(
     () => fromDateTimeLocalValue(startTimeInput),
     [startTimeInput],
@@ -1436,6 +1442,27 @@ function LogsPageContent() {
         stageFilter: gatewayStageFilter,
       }),
     enabled: areLogQueriesEnabled && isPageActive,
+    refetchInterval: 5000,
+    retry: 1,
+  });
+
+  const { data: traceLogsResult, isLoading: isTraceLoading } = useQuery({
+    queryKey: [
+      "logs",
+      "gateway-trace-list",
+      traceEventFilter,
+      traceSearch,
+      tracePage,
+      tracePageSizeNumber,
+    ],
+    queryFn: () =>
+      serviceClient.listGatewayTraceLogs({
+        eventFilter: traceEventFilter,
+        query: traceSearch,
+        page: tracePage,
+        pageSize: tracePageSizeNumber,
+      }),
+    enabled: areLogQueriesEnabled && isPageActive && activeTab === "route-trace",
     refetchInterval: 5000,
     retry: 1,
   });
@@ -1631,6 +1658,41 @@ function LogsPageContent() {
     1,
     Math.ceil(gatewayTotal / gatewayPageSizeNumber),
   );
+  const traceLogs = traceLogsResult?.items || [];
+  const traceEvents = traceLogsResult?.events || [];
+  const traceCurrentPage = traceLogsResult?.page || tracePage;
+  const traceTotal = traceLogsResult?.total || 0;
+  const traceTotalPages = Math.max(
+    1,
+    Math.ceil(traceTotal / tracePageSizeNumber),
+  );
+
+  const routeTraceFields = (item: GatewayTraceLogEntry) => {
+    const preferredKeys = [
+      "route_source",
+      "action",
+      "account_id",
+      "existing_account_id",
+      "binding_account_id",
+      "binding_selected",
+      "bound_account_selectable",
+      "manual_preferred_account_id",
+      "reason",
+      "status",
+    ];
+    return preferredKeys
+      .map((key) => [key, item.fields[key]] as const)
+      .filter(([, value]) => value && value !== "-");
+  };
+
+  const copyTraceSummary = async (item: GatewayTraceLogEntry) => {
+    try {
+      await copyTextToClipboard(item.raw || JSON.stringify(item.fields, null, 2));
+      toast.success(t("诊断信息已复制"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("复制失败"));
+    }
+  };
 
   const copyGatewayErrorSummary = async (item: GatewayErrorLog) => {
     const payload = [
@@ -1661,7 +1723,7 @@ function LogsPageContent() {
       <Tabs
         value={activeTab}
         onValueChange={(value) => {
-          if (value === "requests" || value === "gateway-errors") {
+          if (value === "requests" || value === "gateway-errors" || value === "route-trace") {
             setActiveTab(value);
           }
         }}
@@ -1673,6 +1735,9 @@ function LogsPageContent() {
           </TabsTrigger>
           <TabsTrigger value="gateway-errors" className="gap-2 px-5 shrink-0">
             <Shield className="h-4 w-4" /> {t("网关错误诊断")}
+          </TabsTrigger>
+          <TabsTrigger value="route-trace" className="gap-2 px-5 shrink-0">
+            <Zap className="h-4 w-4" /> {t("路由诊断")}
           </TabsTrigger>
         </TabsList>
 
@@ -1938,7 +2003,20 @@ function LogsPageContent() {
                     className="group text-xs hover:bg-muted/20"
                   >
                     <TableCell className="px-4 py-3 font-mono text-[11px] text-muted-foreground">
-                      {formatTsFromSeconds(log.createdAt, t("未知时间"))}
+                      <div>{formatTsFromSeconds(log.createdAt, t("未知时间"))}</div>
+                      {log.traceId ? (
+                        <button
+                          className="mt-1 text-[10px] text-primary hover:underline"
+                          onClick={() => {
+                            setTraceSearch(log.traceId);
+                            setTraceEventFilter("route");
+                            setTracePage(1);
+                            setActiveTab("route-trace");
+                          }}
+                        >
+                          {t("查看路由")}
+                        </button>
+                      ) : null}
                     </TableCell>
                     <TableCell className="px-4 py-3 align-top">
                       <RequestRouteInfoCell log={log} />
@@ -2373,6 +2451,229 @@ function LogsPageContent() {
                       Math.min(gatewayTotalPages, gatewayCurrentPage + 1),
                     )
                   }
+                >
+                  {t("下一页")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="route-trace" className="space-y-5">
+          <Card className="glass-card border-none shadow-md backdrop-blur-md">
+            <CardContent className="grid gap-4 pt-0 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-foreground">
+                  {t("路由诊断")}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("展示 prompt_cache_key 路由决策和 binding 写入动作，便于排查账号漂移与缓存命中。")}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <Input
+                  placeholder={t("搜索 traceId、账号、route_source...")}
+                  className="glass-card h-9 w-[280px] rounded-xl px-3 text-xs"
+                  value={traceSearch}
+                  onChange={(event) => {
+                    setTraceSearch(event.target.value);
+                    setTracePage(1);
+                  }}
+                />
+                <Select
+                  value={traceEventFilter}
+                  onValueChange={(value) => {
+                    setTraceEventFilter(value || "route");
+                    setTracePage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-9 min-w-[220px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="route">{t("路由相关")}</SelectItem>
+                    <SelectItem value="all">{t("全部事件")}</SelectItem>
+                    {traceEvents.map((eventName) => (
+                      <SelectItem key={eventName} value={eventName}>
+                        {eventName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="glass-card h-9 rounded-xl px-3.5"
+                  onClick={() =>
+                    queryClient.invalidateQueries({
+                      queryKey: ["logs", "gateway-trace-list"],
+                    })
+                  }
+                >
+                  <RefreshCw className="mr-1.5 h-4 w-4" /> {t("刷新")}
+                </Button>
+                <div className="whitespace-nowrap text-xs text-muted-foreground text-right">
+                  {t("当前页")} {traceLogs.length} {t("条")} / {t("共")} {traceTotal} {t("条")}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-card overflow-hidden border-none gap-0 py-0 shadow-xl backdrop-blur-md">
+            <CardHeader className="flex min-h-1 items-center border-b border-border/40 bg-[var(--table-section-bg)] py-3">
+              <div className="flex w-full flex-col gap-1 xl:flex-row xl:items-center xl:justify-between">
+                <CardTitle className="text-[15px] font-semibold">
+                  {t("路由 Trace 明细")}
+                </CardTitle>
+                <div className="text-xs text-muted-foreground">
+                  ROUTE_CONVERSATION_DECISION / CONVERSATION_BINDING_RECORD
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="px-0">
+              <Table className="min-w-[1180px] table-fixed">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="h-12 w-[150px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                      {t("时间")}
+                    </TableHead>
+                    <TableHead className="w-[260px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                      Trace / Event
+                    </TableHead>
+                    <TableHead className="w-[420px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                      {t("关键字段")}
+                    </TableHead>
+                    <TableHead className="w-[300px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                      Raw
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isTraceLoading ? (
+                    Array.from({ length: 6 }).map((_, index) => (
+                      <TableRow key={index}>
+                        <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-48" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-80" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-64" /></TableCell>
+                      </TableRow>
+                    ))
+                  ) : traceLogs.length ? (
+                    traceLogs.map((item, index) => {
+                      const fields = routeTraceFields(item);
+                      return (
+                        <TableRow key={`${item.traceId}-${item.event}-${item.ts || 0}-${index}`}>
+                          <TableCell className="px-4 py-3 align-top font-mono text-[11px] text-muted-foreground">
+                            {formatTsFromSeconds(item.ts)}
+                          </TableCell>
+                          <TableCell className="px-4 py-3 align-top">
+                            <div className="max-w-[240px] truncate font-mono text-[11px] text-foreground">
+                              {item.traceId || "-"}
+                            </div>
+                            <Badge className="mt-1 border-blue-500/20 bg-blue-500/10 text-blue-500">
+                              {item.event || "-"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-4 py-3 align-top">
+                            <div className="flex flex-wrap gap-1.5">
+                              {fields.length ? (
+                                fields.map(([key, value]) => (
+                                  <Badge key={key} variant="secondary" className="font-mono text-[10px]">
+                                    {key}={value}
+                                  </Badge>
+                                ))
+                              ) : (
+                                <span className="text-xs text-muted-foreground">-</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-4 py-3 align-top">
+                            <GatewayTooltipCell
+                              preview={
+                                <div className="max-w-[280px] truncate font-mono text-[11px] text-muted-foreground">
+                                  {item.raw || "-"}
+                                </div>
+                              }
+                              content={
+                                <div className="max-w-[520px] whitespace-pre-wrap break-all font-mono text-[11px]">
+                                  {item.raw || "-"}
+                                </div>
+                              }
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2 h-7 px-2 text-[11px]"
+                              onClick={() => void copyTraceSummary(item)}
+                            >
+                              <Copy className="mr-1 h-3.5 w-3.5" /> {t("复制诊断")}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  ) : (
+                    <TableRow>
+                      <TableCell
+                        colSpan={4}
+                        className="px-4 py-10 text-center text-sm text-muted-foreground"
+                      >
+                        {t("当前筛选下没有匹配的路由诊断日志")}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <div className="flex items-center justify-between px-2">
+            <div className="text-xs text-muted-foreground">
+              {t("共")} {traceTotal} {t("条匹配路由诊断")}
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2">
+                <span className="whitespace-nowrap text-xs text-muted-foreground">
+                  {t("每页显示")}
+                </span>
+                <Select
+                  value={tracePageSize}
+                  onValueChange={(value) => {
+                    setTracePageSize(value || "20");
+                    setTracePage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-8 w-[78px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["10", "20", "50", "100", "200"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  disabled={traceCurrentPage <= 1}
+                  onClick={() => setTracePage(Math.max(1, traceCurrentPage - 1))}
+                >
+                  {t("上一页")}
+                </Button>
+                <div className="min-w-[68px] text-center text-xs font-medium">
+                  {t("第")} {traceCurrentPage} / {traceTotalPages} {t("页")}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-3 text-xs"
+                  disabled={traceCurrentPage >= traceTotalPages}
+                  onClick={() => setTracePage(Math.min(traceTotalPages, traceCurrentPage + 1))}
                 >
                   {t("下一页")}
                 </Button>

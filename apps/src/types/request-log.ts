@@ -68,6 +68,22 @@ export interface GatewayErrorLogListResult {
   stages: string[];
 }
 
+export interface GatewayTraceLogEntry {
+  ts: number | null;
+  event: string;
+  traceId: string;
+  fields: Record<string, string>;
+  raw: string;
+}
+
+export interface GatewayTraceLogListResult {
+  items: GatewayTraceLogEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  events: string[];
+}
+
 export interface RequestLogFilterSummary {
   totalCount: number;
   filteredCount: number;
