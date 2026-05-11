@@ -145,6 +145,19 @@ fn auth_account(captured: &CapturedUpstreamRequest) -> &str {
     }
 }
 
+fn read_trace_log(dir: &std::path::Path) -> String {
+    let path = dir.join("gateway-trace.log");
+    for _ in 0..40 {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if !content.trim().is_empty() {
+                return content;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    fs::read_to_string(&path).unwrap_or_default()
+}
+
 #[test]
 fn gateway_prompt_cache_binding_reuses_account_for_previous_response_chain() {
     let _lock = test_env_guard();
@@ -236,6 +249,23 @@ fn gateway_prompt_cache_binding_reuses_account_for_previous_response_chain() {
             .and_then(serde_json::Value::as_str),
         Some(prompt_cache_key),
         "existing-only pck route id must stay route-only and not become upstream prompt_cache_key"
+    );
+
+    let trace_log = read_trace_log(&dir);
+    assert!(
+        trace_log.contains("event=ROUTE_CONVERSATION_DECISION")
+            && trace_log.contains("route_source=prompt_cache_key"),
+        "prompt-cache route decisions should be written to gateway trace log, got: {trace_log}"
+    );
+    assert!(
+        trace_log.contains("event=CONVERSATION_BINDING_RECORD")
+            && trace_log.contains("action=create_initial"),
+        "prompt-cache binding creation should be written to gateway trace log, got: {trace_log}"
+    );
+    assert!(
+        trace_log.contains("route_source=prompt_cache_key_existing_only")
+            && trace_log.contains("action=touch_existing"),
+        "existing-only prompt-cache follow-up should log route source and binding touch, got: {trace_log}"
     );
 }
 

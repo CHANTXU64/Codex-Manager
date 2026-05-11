@@ -16,6 +16,7 @@ import {
   normalizeAppSettings,
   normalizeBackgroundTasks,
   normalizeGatewayErrorLogListResult,
+  normalizeGatewayTraceLogListResult,
   normalizeRequestLogFilterSummary,
   normalizeRequestLogListResult,
   normalizeStartupSnapshot,
@@ -24,6 +25,7 @@ import {
 import {
   BackgroundTaskSettings,
   GatewayErrorLogListResult,
+  GatewayTraceLogListResult,
   RequestLogFilterSummary,
   RequestLogListResult,
   RequestLogTodaySummary,
@@ -183,6 +185,25 @@ export const serviceClient = {
       })
     );
     return normalizeGatewayErrorLogListResult(result);
+  },
+  async listGatewayTraceLogs(params?: {
+    traceId?: string;
+    eventFilter?: string;
+    query?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<GatewayTraceLogListResult> {
+    const result = await invoke<unknown>(
+      "service_requestlog_trace_list",
+      withAddr({
+        traceId: params?.traceId || null,
+        eventFilter: params?.eventFilter || "route",
+        query: params?.query || "",
+        page: params?.page ?? 1,
+        pageSize: params?.pageSize ?? 20,
+      })
+    );
+    return normalizeGatewayTraceLogListResult(result);
   },
   clearGatewayErrorLogs: () =>
     invoke("service_requestlog_error_clear", withAddr()),

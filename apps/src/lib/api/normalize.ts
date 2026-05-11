@@ -17,6 +17,8 @@ import {
   EnvOverrideCatalogItem,
   GatewayErrorLog,
   GatewayErrorLogListResult,
+  GatewayTraceLogEntry,
+  GatewayTraceLogListResult,
   InstalledPluginSummary,
   LoginStartResult,
   ManagedModelCatalog,
@@ -1405,6 +1407,39 @@ export function normalizeGatewayErrorLogListResult(
     page: asInteger(source.page, 1, 1),
     pageSize: asInteger(source.pageSize, items.length || 10, 1),
     stages: asArray(source.stages).map((item) => asString(item)).filter(Boolean),
+  };
+}
+
+export function normalizeGatewayTraceLogs(payload: unknown): GatewayTraceLogEntry[] {
+  const source = asObject(payload);
+  const items = asArray(source.items ?? payload);
+  return items.map((item): GatewayTraceLogEntry => {
+    const record = asObject(item);
+    const fieldsSource = asObject(record.fields);
+    const fields = Object.fromEntries(
+      Object.entries(fieldsSource).map(([key, value]) => [key, asString(value)])
+    );
+    return {
+      ts: toNullableNumber(record.ts),
+      event: asString(record.event),
+      traceId: asString(record.traceId ?? record.trace_id),
+      fields,
+      raw: asString(record.raw),
+    };
+  });
+}
+
+export function normalizeGatewayTraceLogListResult(
+  payload: unknown
+): GatewayTraceLogListResult {
+  const source = asObject(payload);
+  const items = normalizeGatewayTraceLogs(source.items ?? payload);
+  return {
+    items,
+    total: asInteger(source.total, items.length, 0),
+    page: asInteger(source.page, 1, 1),
+    pageSize: asInteger(source.pageSize, items.length || 20, 1),
+    events: asArray(source.events).map((item) => asString(item)).filter(Boolean),
   };
 }
 

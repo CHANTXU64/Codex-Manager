@@ -989,6 +989,122 @@ pub(crate) fn log_candidate_start(
     buffer_trace_line(trace_id, line);
 }
 
+pub(crate) struct RouteConversationDecisionLog<'a> {
+    pub trace_id: &'a str,
+    pub protocol: &'a str,
+    pub path: &'a str,
+    pub route_source: Option<&'a str>,
+    pub route_id: Option<&'a str>,
+    pub has_existing_binding: bool,
+    pub binding_account_id: Option<&'a str>,
+    pub binding_thread_epoch: Option<i64>,
+    pub binding_selected_for_thread_anchor: bool,
+    pub incoming_conversation: bool,
+    pub incoming_turn_state: bool,
+    pub initial_prompt_cache_key: bool,
+    pub client_prompt_cache_key: bool,
+    pub previous_response_id: bool,
+    pub local_conversation_id: Option<&'a str>,
+    pub effective_thread_anchor: Option<&'a str>,
+}
+
+pub(crate) fn log_route_conversation_decision(params: RouteConversationDecisionLog<'_>) {
+    let route_id_fp = params
+        .route_id
+        .map(short_fingerprint)
+        .unwrap_or_else(|| "-".to_string());
+    let effective_thread_anchor_fp = params
+        .effective_thread_anchor
+        .map(short_fingerprint)
+        .unwrap_or_else(|| "-".to_string());
+    let line = format!(
+        "ts={} event=ROUTE_CONVERSATION_DECISION trace_id={} protocol={} path={} route_source={} route_id_fp={} existing_binding={} binding_account_id={} binding_thread_epoch={} binding_selected_for_thread_anchor={} incoming_conversation={} incoming_turn_state={} initial_prompt_cache_key={} client_prompt_cache_key={} previous_response_id={} local_conversation_id={} effective_thread_anchor_fp={}",
+        current_trace_ts(),
+        sanitize_text(params.trace_id),
+        sanitize_text(params.protocol),
+        sanitize_text(params.path),
+        sanitize_text(params.route_source.unwrap_or("none")),
+        sanitize_text(route_id_fp.as_str()),
+        if params.has_existing_binding { "true" } else { "false" },
+        sanitize_text(params.binding_account_id.unwrap_or("-")),
+        params
+            .binding_thread_epoch
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        if params.binding_selected_for_thread_anchor {
+            "true"
+        } else {
+            "false"
+        },
+        if params.incoming_conversation { "true" } else { "false" },
+        if params.incoming_turn_state { "true" } else { "false" },
+        if params.initial_prompt_cache_key { "true" } else { "false" },
+        if params.client_prompt_cache_key { "true" } else { "false" },
+        if params.previous_response_id { "true" } else { "false" },
+        sanitize_text(params.local_conversation_id.unwrap_or("-")),
+        sanitize_text(effective_thread_anchor_fp.as_str()),
+    );
+    if params
+        .route_source
+        .is_some_and(|source| source.starts_with("prompt_cache_key"))
+        || params.initial_prompt_cache_key
+        || params.client_prompt_cache_key
+    {
+        append_trace_line(line, true);
+    } else {
+        buffer_trace_line(params.trace_id, line);
+    }
+}
+
+pub(crate) struct ConversationBindingRecordLog<'a> {
+    pub trace_id: &'a str,
+    pub route_source: &'a str,
+    pub route_id: &'a str,
+    pub action: &'a str,
+    pub account_id: &'a str,
+    pub status_code: u16,
+    pub existing_account_id: Option<&'a str>,
+    pub binding_selected: bool,
+    pub bound_account_selectable: bool,
+    pub manual_preferred_account_id: Option<&'a str>,
+    pub thread_epoch: Option<i64>,
+    pub thread_anchor: Option<&'a str>,
+    pub reason: Option<&'a str>,
+}
+
+pub(crate) fn log_conversation_binding_record(params: ConversationBindingRecordLog<'_>) {
+    let route_id_fp = short_fingerprint(params.route_id);
+    let thread_anchor_fp = params
+        .thread_anchor
+        .map(short_fingerprint)
+        .unwrap_or_else(|| "-".to_string());
+    let line = format!(
+        "ts={} event=CONVERSATION_BINDING_RECORD trace_id={} route_source={} route_id_fp={} action={} account_id={} status={} existing_account_id={} binding_selected={} bound_account_selectable={} manual_preferred_account_id={} thread_epoch={} thread_anchor_fp={} reason={}",
+        current_trace_ts(),
+        sanitize_text(params.trace_id),
+        sanitize_text(params.route_source),
+        sanitize_text(route_id_fp.as_str()),
+        sanitize_text(params.action),
+        sanitize_text(params.account_id),
+        params.status_code,
+        sanitize_text(params.existing_account_id.unwrap_or("-")),
+        if params.binding_selected { "true" } else { "false" },
+        if params.bound_account_selectable { "true" } else { "false" },
+        sanitize_text(params.manual_preferred_account_id.unwrap_or("-")),
+        params
+            .thread_epoch
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        sanitize_text(thread_anchor_fp.as_str()),
+        sanitize_text(params.reason.unwrap_or("-")),
+    );
+    if params.route_source.starts_with("prompt_cache_key") {
+        append_trace_line(line, true);
+    } else {
+        buffer_trace_line(params.trace_id, line);
+    }
+}
+
 /// 函数 `log_candidate_pool`
 ///
 /// 作者: gaohongshun

@@ -3,11 +3,11 @@
 > 这是 Codex-Manager fork/本地分支的本地修改保护文档。后续任何本地改动都必须写到这里，供 AI Agent 在 rebase、merge、冲突处理、PR 合并前确认，不要因为不了解背景误删功能。
 
 - Repository: `CHANTXU64/Codex-Manager`
-- Current branch: `fix/prompt-cache-route-binding`
-- PR: https://github.com/CHANTXU64/Codex-Manager/pull/1
-- Current local base for this branch: `b1604e72 fix: 让路由优先按缓存线程固定账号`
-- Latest documented head: `8093e7e6 fix: keep manual preferred from migrating cache binding` + uncommitted test/documentation updates
-- Last updated: 2026-05-11 21:30 CST
+- Current branch: `fix/prompt-cache-route-logging`
+- PR: pending
+- Current local base for this branch: `5029131b Merge pull request #1 from CHANTXU64/fix/prompt-cache-route-binding`
+- Latest documented head: uncommitted prompt-cache route logging updates
+- Last updated: 2026-05-11 22:10 CST
 
 ## Merge rules for AI agents
 
@@ -386,6 +386,91 @@ Before merging this branch or resolving conflicts, verify these exact items:
   - Preserve the `gateway_logs::prompt_cache` tests when rebasing or resolving conflicts.
 - Verification:
   - `cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture`
+
+### 2026-05-11 22:10 CST - prompt-cache route logging
+
+- Branch: `fix/prompt-cache-route-logging`
+- Modified files:
+  - `crates/service/src/gateway/local_validation/request.rs`
+  - `crates/service/src/gateway/observability/trace_log.rs`
+  - `crates/service/src/gateway/routing/conversation_binding.rs`
+  - `crates/service/src/gateway/upstream/proxy_pipeline/candidate_executor.rs`
+  - `crates/service/tests/gateway_logs/prompt_cache.rs`
+  - `docs/LOCAL_MODIFICATIONS.md`
+- Summary:
+  - Added `ROUTE_CONVERSATION_DECISION` trace entries for route source,
+    pck route id fingerprint, existing binding account/epoch, incoming
+    conversation/turn_state flags, prompt-cache key presence, and effective
+    thread-anchor fingerprint.
+  - Added `CONVERSATION_BINDING_RECORD` trace entries for binding actions:
+    create, touch, rebind, preserve selectable pck binding, and existing-only
+    no-create skips.
+  - Prompt-cache-specific route/binding trace entries are flushed immediately
+    to `gateway-trace.log`, so cache routing drift can be diagnosed even when
+    the request succeeds.
+  - Extended gateway prompt-cache regression test to assert these trace events
+    are actually written by the real HTTP gateway pipeline.
+- Merge protection:
+  - Preserve `ROUTE_CONVERSATION_DECISION` and `CONVERSATION_BINDING_RECORD`
+    fields when refactoring routing/logging.
+  - Do not log raw `prompt_cache_key`; only log fingerprints/booleans.
+- Verification:
+  - `cargo test -p codexmanager-service --test gateway_logs prompt_cache -- --nocapture`
+  - `cargo test -p codexmanager-service prompt_cache -- --nocapture`
+  - `cargo check -p codexmanager-service`
+
+### 2026-05-11 22:35 CST - web route trace diagnostics
+
+- Branch: `fix/prompt-cache-route-logging`
+- Modified files:
+  - `crates/core/src/rpc/types.rs`
+  - `crates/service/src/requestlog/requestlog_trace_list.rs`
+  - `crates/service/src/requestlog/mod.rs`
+  - `crates/service/src/rpc_dispatch/requestlog.rs`
+  - `crates/service/src/lib.rs`
+  - `apps/src/types/request-log.ts`
+  - `apps/src/lib/api/normalize.ts`
+  - `apps/src/lib/api/service-client.ts`
+  - `apps/src/lib/api/transport-web-commands.ts`
+  - `apps/src/app/logs/page.tsx`
+- Summary:
+  - Added `requestlog/trace_list` RPC and frontend command `service_requestlog_trace_list`.
+  - The RPC reads `gateway-trace.log`, parses key-value trace entries, and supports
+    `traceId`, `eventFilter`, `query`, `page`, and `pageSize` filters.
+  - Added `/logs` tab `路由诊断` with route-event filter, search, pagination,
+    raw-copy, and key-field badges.
+  - Added `查看路由` shortcut on each request-log row to open the route trace tab
+    filtered by that request's `traceId`.
+- Merge protection:
+  - Keep raw `prompt_cache_key` out of the frontend payload; route diagnostics should
+    expose only booleans and fingerprints already written to trace lines.
+  - Keep the default trace event filter as `route` so the tab focuses on
+    `ROUTE_CONVERSATION_DECISION` and `CONVERSATION_BINDING_RECORD`.
+- Verification:
+  - `cargo test -p codexmanager-service parses_key_value_trace_line -- --nocapture`
+  - `cargo test -p codexmanager-service bounds_trace_page_size -- --nocapture`
+  - `cargo check -p codexmanager-service`
+  - `pnpm run build:desktop` in `apps/`
+
+### 2026-05-11 22:50 CST - PR #2 review fixes
+
+- Branch: `fix/prompt-cache-route-logging`
+- Modified files:
+  - `crates/service/src/requestlog/requestlog_trace_list.rs`
+  - `apps/src/app/logs/page.tsx`
+  - `docs/LOCAL_MODIFICATIONS.md`
+- Summary:
+  - Changed trace log reading from full-file `read_to_string` to `File::open` +
+    `seek` from the file tail, reading at most `MAX_TRACE_FILE_BYTES` and dropping
+    the first partial line when reading from the middle of a log file.
+  - Added `traceIdFilter` state in `/logs` route diagnostics. Request-row `查看路由`
+    now passes `traceId` to the backend exact filter instead of searching raw text.
+  - Added tests covering tail-only reads and documenting the current parser's
+    whitespace-delimited `key=value` limitation.
+- Verification:
+  - `cargo test -p codexmanager-service requestlog::trace_list -- --nocapture`
+  - `cargo check -p codexmanager-service`
+  - `pnpm run build:desktop` in `apps/`
 
 ### Template for future updates
 

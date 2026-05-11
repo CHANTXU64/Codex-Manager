@@ -1626,6 +1626,31 @@ pub(super) fn build_local_validation_result(
         local_conversation_id.as_deref(),
         binding_for_thread_anchor,
     );
+    super::super::trace_log::log_route_conversation_decision(
+        super::super::trace_log::RouteConversationDecisionLog {
+            trace_id: trace_id.as_str(),
+            protocol: effective_protocol_type,
+            path: normalized_path.as_str(),
+            route_source: route_conversation_source.map(|source| source.as_str()),
+            route_id: route_conversation_id.as_deref(),
+            has_existing_binding: conversation_binding.is_some(),
+            binding_account_id: conversation_binding
+                .as_ref()
+                .map(|binding| binding.account_id.as_str()),
+            binding_thread_epoch: conversation_binding
+                .as_ref()
+                .map(|binding| binding.thread_epoch),
+            binding_selected_for_thread_anchor: binding_for_thread_anchor.is_some(),
+            incoming_conversation: incoming_headers.conversation_id().is_some(),
+            incoming_turn_state: incoming_headers.turn_state().is_some(),
+            initial_prompt_cache_key: initial_request_meta.has_prompt_cache_key,
+            client_prompt_cache_key: client_request_meta.has_prompt_cache_key,
+            previous_response_id: initial_request_meta.has_previous_response_id
+                || client_request_meta.has_previous_response_id,
+            local_conversation_id: local_conversation_id.as_deref(),
+            effective_thread_anchor: effective_thread_anchor.as_deref(),
+        },
+    );
     // 中文注释：保留原始 local conversation_id 作为对外会话标识；
     // 线程世代只参与 prompt_cache_key 与路由绑定，不直接污染对外请求头。
     let incoming_headers =

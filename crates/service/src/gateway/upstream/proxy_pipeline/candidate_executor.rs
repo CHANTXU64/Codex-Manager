@@ -445,6 +445,7 @@ pub(in super::super) fn execute_candidate_sequence(
                             &account,
                             attempt_model_for_log,
                             response_status,
+                            Some(trace_id),
                         ) {
                             log::warn!(
                                 "event=gateway_conversation_binding_update_failed trace_id={} account_id={} err={}",

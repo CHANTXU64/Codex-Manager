@@ -53,6 +53,7 @@ pub(crate) use requestlog::error_list as requestlog_error_list;
 pub(crate) use requestlog::list as requestlog_list;
 pub(crate) use requestlog::summary as requestlog_summary;
 pub(crate) use requestlog::today_summary as requestlog_today_summary;
+pub(crate) use requestlog::trace_list as requestlog_trace_list;
 pub(crate) use runtime::lock_utils;
 pub use runtime::process_env;
 pub(crate) use runtime::reasoning_effort;

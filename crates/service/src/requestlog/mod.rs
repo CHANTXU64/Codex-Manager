@@ -8,3 +8,5 @@ pub(crate) mod list;
 pub(crate) mod summary;
 #[path = "requestlog_today_summary.rs"]
 pub(crate) mod today_summary;
+#[path = "requestlog_trace_list.rs"]
+pub(crate) mod trace_list;

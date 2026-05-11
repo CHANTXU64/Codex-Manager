@@ -879,6 +879,65 @@ pub struct GatewayErrorLogListResult {
     pub stages: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GatewayTraceListParams {
+    pub page: i64,
+    pub page_size: i64,
+    pub trace_id: Option<String>,
+    pub event_filter: Option<String>,
+    pub query: Option<String>,
+}
+
+impl Default for GatewayTraceListParams {
+    fn default() -> Self {
+        Self {
+            page: 1,
+            page_size: 20,
+            trace_id: None,
+            event_filter: None,
+            query: None,
+        }
+    }
+}
+
+impl GatewayTraceListParams {
+    pub fn normalized(self) -> Self {
+        Self {
+            page: if self.page < 1 { 1 } else { self.page },
+            page_size: if self.page_size < 1 {
+                20
+            } else {
+                self.page_size
+            },
+            trace_id: self.trace_id,
+            event_filter: self.event_filter,
+            query: self.query,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayTraceLogEntry {
+    pub ts: i64,
+    pub event: String,
+    pub trace_id: String,
+    pub fields: BTreeMap<String, String>,
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayTraceListResult {
+    pub items: Vec<GatewayTraceLogEntry>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestLogFilterSummaryResult {
