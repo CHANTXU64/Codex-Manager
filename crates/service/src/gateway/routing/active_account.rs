@@ -5,8 +5,6 @@ use std::collections::HashMap;
 
 pub(crate) const ACTIVE_ACCOUNT_IDLE_TTL_SECS: i64 = 3600;
 pub(crate) const ACTIVE_ACCOUNT_MAX_STICKY_SECS: i64 = 14400;
-#[allow(dead_code)]
-pub(crate) const MAX_SAME_ACCOUNT_TRANSIENT_ATTEMPTS: usize = 3;
 pub(crate) const MAX_CONSECUTIVE_REAL_ERRORS: i64 = 3;
 const URGENCY_NORMALIZATION_SECS: f64 = 518_400.0;
 const URGENCY_MIN_TIME_UNTIL_RESET_SECS: i64 = 3600;
@@ -90,6 +88,7 @@ pub(crate) fn apply_active_account_to_candidates(
     }
     let decision = get_or_select_active_account(storage, key_id, candidates.as_slice(), now)?;
     rotate_to_account(candidates, decision.account_id.as_str());
+    candidates.truncate(1);
     Ok(Some(decision))
 }
 
@@ -521,7 +520,6 @@ mod tests {
 
     #[test]
     fn error_helpers_classify_transient_disconnect_and_direct_clear() {
-        assert_eq!(MAX_SAME_ACCOUNT_TRANSIENT_ATTEMPTS, 3);
         assert!(is_transient_error("upstream timeout"));
         assert!(is_client_disconnect_error("broken pipe"));
         assert!(is_direct_clear_error("unauthorized"));
@@ -693,8 +691,10 @@ mod tests {
 
         assert_eq!(selected.account_id, "acc-entry-a");
         assert_eq!(first[0].0.id, "acc-entry-a");
+        assert_eq!(first.len(), 1);
         assert_eq!(reused.reason, ActiveAccountDecisionReason::Reused);
         assert_eq!(second[0].0.id, "acc-entry-a");
+        assert_eq!(second.len(), 1);
     }
 
     #[test]
@@ -738,6 +738,8 @@ mod tests {
 
         assert_eq!(key_a_candidates[0].0.id, "acc-key-a");
         assert_eq!(key_b_candidates[0].0.id, "acc-key-b");
+        assert_eq!(key_a_candidates.len(), 1);
+        assert_eq!(key_b_candidates.len(), 1);
     }
 
     #[test]
@@ -781,6 +783,34 @@ mod tests {
         assert_eq!(record.active_account_id, "acc-transient-a");
         assert_eq!(record.consecutive_real_errors, 2);
         assert!(!crate::gateway::is_account_in_cooldown("acc-transient-a"));
+    }
+
+    #[test]
+    fn success_resets_consecutive_real_errors_to_zero() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-success-reset".to_string(),
+                active_account_id: "acc-success-reset".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 2,
+                last_switch_reason: Some("upstream timeout".to_string()),
+                updated_at: now,
+            })
+            .expect("seed");
+
+        record_active_account_success(&storage, "key-success-reset", "acc-success-reset", now + 1)
+            .expect("record success");
+        let record = storage
+            .get_api_key_active_account("key-success-reset")
+            .expect("load")
+            .expect("record");
+
+        assert_eq!(record.consecutive_real_errors, 0);
+        assert_eq!(record.last_used_at, now + 1);
     }
 
     #[test]
