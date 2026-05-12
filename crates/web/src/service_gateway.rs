@@ -374,6 +374,41 @@ pub(super) async fn author_content(State(state): State<Arc<AppState>>) -> Respon
     out
 }
 
+pub(super) async fn usage_refresh_events(State(state): State<Arc<AppState>>) -> Response {
+    let target_url = format!("http://{}/events/usage-refresh", state.service_addr.trim());
+    let resp = state
+        .client
+        .get(&target_url)
+        .header("accept", "text/event-stream")
+        .header("x-codexmanager-rpc-token", &state.rpc_token)
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(value) => value,
+        Err(err) => {
+            let msg = format_upstream_error_message(state.service_addr.as_str(), &err);
+            return (StatusCode::BAD_GATEWAY, msg).into_response();
+        }
+    };
+
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut out = Response::new(Body::from_stream(resp.bytes_stream()));
+    *out.status_mut() = status;
+    out.headers_mut().insert(
+        "content-type",
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    out.headers_mut().insert(
+        "cache-control",
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    out.headers_mut().insert(
+        "x-accel-buffering",
+        axum::http::HeaderValue::from_static("no"),
+    );
+    out
+}
+
 const GATEWAY_PROXY_MAX_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 /// 函数 `gateway_proxy_target_url`

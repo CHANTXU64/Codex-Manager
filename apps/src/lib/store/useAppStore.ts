@@ -35,8 +35,7 @@ interface AppState {
   closeShellTab: (path: string) => TopLevelRoutePath | null;
 }
 
-const initialShellPath =
-  typeof window === "undefined" ? "/" : toTopLevelRoutePath(window.location.pathname);
+const initialShellPath: TopLevelRoutePath = "/";
 
 export const useAppStore = create<AppState>((set) => ({
   serviceStatus: {

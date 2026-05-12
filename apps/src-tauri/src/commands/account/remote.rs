@@ -342,6 +342,9 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
         )
         .expect("payload");
         let expected = serde_json::json!({
@@ -364,9 +367,19 @@ mod tests {
     /// 无
     #[test]
     fn account_update_payload_supports_sort_only_updates() {
-        let actual =
-            account_update_payload("acc-1".to_string(), Some(5), None, None, None, None, None)
-                .expect("payload");
+        let actual = account_update_payload(
+            "acc-1".to_string(),
+            Some(5),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("payload");
         let expected = serde_json::json!({
             "accountId": "acc-1",
             "sort": 5
@@ -395,6 +408,9 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
+            None,
         )
         .expect("payload");
         let expected = serde_json::json!({
@@ -409,6 +425,9 @@ mod tests {
             "acc-1".to_string(),
             None,
             Some(true),
+            None,
+            None,
+            None,
             None,
             None,
             None,

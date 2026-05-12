@@ -39,6 +39,7 @@ fn new_test_dir(prefix: &str) -> PathBuf {
 struct RpcTestContext {
     _env_lock: MutexGuard<'static, ()>,
     _db_path_guard: EnvGuard,
+    _auto_usage_refresh_guard: EnvGuard,
     dir: PathBuf,
 }
 
@@ -60,9 +61,12 @@ impl RpcTestContext {
         let db_path = dir.join("codexmanager.db");
         let db_path_guard =
             EnvGuard::set("CODEXMANAGER_DB_PATH", db_path.to_string_lossy().as_ref());
+        let auto_usage_refresh_guard =
+            EnvGuard::set("CODEXMANAGER_AUTO_USAGE_REFRESH_AFTER_ACCOUNT_ADD", "0");
         Self {
             _env_lock: env_lock,
             _db_path_guard: db_path_guard,
+            _auto_usage_refresh_guard: auto_usage_refresh_guard,
             dir,
         }
     }
@@ -1750,6 +1754,107 @@ fn rpc_chatgpt_auth_tokens_login_read_logout_roundtrip() {
         .expect("find account")
         .expect("account exists");
     assert_eq!(account.status, "inactive");
+}
+
+#[test]
+fn rpc_chatgpt_auth_tokens_login_enqueues_usage_refresh() {
+    let ctx = RpcTestContext::new("rpc-chatgpt-auth-tokens-login-auto-usage-refresh");
+    let access_token = build_access_token(
+        "sub-usage-refresh",
+        "usage-refresh@example.com",
+        "org-usage-refresh",
+        "pro",
+    );
+    let subscription_response = serde_json::json!({
+        "id": "sub-record-usage-refresh",
+        "plan_type": "plus",
+        "active_until": "2026-05-06T03:31:29Z",
+        "next_credit_grant_update": "2026-04-20T03:31:29Z",
+        "will_renew": true
+    });
+    let usage_response = serde_json::json!({
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 25.0,
+                "limit_window_seconds": 18000,
+                "reset_at": 1776655889
+            },
+            "secondary_window": {
+                "used_percent": 10.0,
+                "limit_window_seconds": 604800,
+                "reset_at": 1778038289
+            }
+        }
+    });
+    let (usage_base_url, request_rx, request_join) = start_mock_usage_refresh_server(
+        serde_json::to_string(&subscription_response)
+            .expect("serialize auto usage refresh subscription response"),
+        serde_json::to_string(&usage_response).expect("serialize auto usage response"),
+    );
+    let _auto_refresh_guard =
+        EnvGuard::set("CODEXMANAGER_AUTO_USAGE_REFRESH_AFTER_ACCOUNT_ADD", "1");
+    let _usage_base_url_guard = EnvGuard::set("CODEXMANAGER_USAGE_BASE_URL", &usage_base_url);
+
+    let login_req = JsonRpcRequest {
+        id: 46.into(),
+        method: "account/login/start".to_string(),
+        params: Some(serde_json::json!({
+            "type": "chatgptAuthTokens",
+            "accessToken": access_token.clone(),
+            "chatgptAccountId": "org-usage-refresh"
+        })),
+        trace: None,
+    };
+    let login_json = serde_json::to_string(&login_req).expect("serialize login");
+    let login_server = codexmanager_service::start_one_shot_server().expect("start server");
+    let login_resp = post_rpc(&login_server.addr, &login_json);
+    let login_result = login_resp.get("result").expect("login result");
+    assert_eq!(
+        login_result.get("type").and_then(|value| value.as_str()),
+        Some("chatgptAuthTokens")
+    );
+
+    let first_request = request_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("receive auto subscription request");
+    let second_request = request_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("receive auto usage request");
+    request_join.join().expect("join auto usage refresh server");
+
+    assert_eq!(
+        first_request.path,
+        "/subscriptions?account_id=org-usage-refresh"
+    );
+    assert_eq!(
+        first_request.authorization.as_deref(),
+        Some(format!("Bearer {access_token}").as_str())
+    );
+    assert_eq!(first_request.chatgpt_account_id, None);
+    assert_eq!(second_request.path, "/api/codex/usage");
+    assert_eq!(
+        second_request.authorization.as_deref(),
+        Some(format!("Bearer {access_token}").as_str())
+    );
+    assert_eq!(
+        second_request.chatgpt_account_id.as_deref(),
+        Some("org-usage-refresh")
+    );
+
+    let storage = Storage::open(ctx.db_path()).expect("open db");
+    let account_id = storage
+        .list_accounts()
+        .expect("list accounts")
+        .into_iter()
+        .find(|account| account.chatgpt_account_id.as_deref() == Some("org-usage-refresh"))
+        .map(|account| account.id)
+        .expect("account id");
+    let snapshot = storage
+        .latest_usage_snapshot_for_account(&account_id)
+        .expect("find usage snapshot")
+        .expect("usage snapshot exists");
+    assert_eq!(snapshot.used_percent, Some(25.0));
+    assert_eq!(snapshot.secondary_used_percent, Some(10.0));
 }
 
 /// 函数 `rpc_chatgpt_auth_tokens_refresh_updates_access_token`
