@@ -29,6 +29,7 @@ static ACCOUNT_COOLDOWN_UNTIL: OnceLock<Mutex<AccountCooldownState>> = OnceLock:
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CooldownReason {
     Default,
+    ActiveAccountRealErrorThreshold,
     Network,
     RateLimited,
     Upstream5xx,
@@ -50,6 +51,7 @@ pub(super) enum CooldownReason {
 fn cooldown_secs_for_reason(reason: CooldownReason) -> i64 {
     match reason {
         CooldownReason::Default => DEFAULT_ACCOUNT_COOLDOWN_SECS,
+        CooldownReason::ActiveAccountRealErrorThreshold => DEFAULT_ACCOUNT_COOLDOWN_SECS,
         CooldownReason::Network => DEFAULT_ACCOUNT_COOLDOWN_NETWORK_SECS,
         CooldownReason::RateLimited => DEFAULT_ACCOUNT_COOLDOWN_429_SECS,
         CooldownReason::Upstream5xx => DEFAULT_ACCOUNT_COOLDOWN_5XX_SECS,

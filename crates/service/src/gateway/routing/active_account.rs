@@ -136,6 +136,10 @@ pub(crate) fn record_active_account_real_error(
         .map_err(|err| format!("increment active account errors failed: {err}"))?;
     let updated_errors = record.consecutive_real_errors + 1;
     if updated_errors >= MAX_CONSECUTIVE_REAL_ERRORS {
+        super::mark_account_cooldown(
+            account_id,
+            super::CooldownReason::ActiveAccountRealErrorThreshold,
+        );
         clear_active_account(storage, key_id, reason)?;
         return Ok(true);
     }
@@ -149,6 +153,17 @@ pub(crate) fn clear_active_account(
 ) -> Result<(), String> {
     storage
         .clear_api_key_active_account(key_id, reason)
+        .map_err(|err| format!("clear active account failed: {err}"))
+}
+
+pub(crate) fn clear_active_account_if_matches(
+    storage: &Storage,
+    key_id: &str,
+    account_id: &str,
+    reason: &str,
+) -> Result<bool, String> {
+    storage
+        .clear_api_key_active_account_if_matches(key_id, account_id, reason)
         .map_err(|err| format!("clear active account failed: {err}"))
 }
 
@@ -544,6 +559,104 @@ mod tests {
         assert!(storage
             .get_api_key_active_account("key-1")
             .expect("load")
+            .is_none());
+    }
+
+    #[test]
+    fn threshold_real_error_cooldown_forces_next_selection_to_other_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .insert_usage_snapshot(&usage(
+                "acc-threshold-a",
+                10.0,
+                Some(10.0),
+                Some(now + 3600),
+            ))
+            .expect("usage a");
+        storage
+            .insert_usage_snapshot(&usage(
+                "acc-threshold-b",
+                10.0,
+                Some(90.0),
+                Some(now + 6 * 86_400),
+            ))
+            .expect("usage b");
+        let candidates = vec![
+            (account("acc-threshold-a", 0), token("acc-threshold-a")),
+            (account("acc-threshold-b", 1), token("acc-threshold-b")),
+        ];
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-threshold".to_string(),
+                active_account_id: "acc-threshold-a".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: MAX_CONSECUTIVE_REAL_ERRORS - 1,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed");
+
+        let cleared = record_active_account_real_error(
+            &storage,
+            "key-threshold",
+            "acc-threshold-a",
+            "upstream timeout",
+            now + 1,
+        )
+        .expect("record");
+        let selected =
+            get_or_select_active_account(&storage, "key-threshold", &candidates, now + 2)
+                .expect("select next");
+
+        assert!(cleared);
+        assert_eq!(selected.account_id, "acc-threshold-b");
+    }
+
+    #[test]
+    fn direct_clear_only_removes_matching_active_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-direct-clear".to_string(),
+                active_account_id: "acc-active".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 0,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed");
+
+        let mismatched = clear_active_account_if_matches(
+            &storage,
+            "key-direct-clear",
+            "acc-failover",
+            "unauthorized",
+        )
+        .expect("clear mismatch");
+        let still_active = storage
+            .get_api_key_active_account("key-direct-clear")
+            .expect("load")
+            .expect("record");
+        let matched = clear_active_account_if_matches(
+            &storage,
+            "key-direct-clear",
+            "acc-active",
+            "unauthorized",
+        )
+        .expect("clear match");
+
+        assert!(!mismatched);
+        assert_eq!(still_active.active_account_id, "acc-active");
+        assert!(matched);
+        assert!(storage
+            .get_api_key_active_account("key-direct-clear")
+            .expect("load cleared")
             .is_none());
     }
 }

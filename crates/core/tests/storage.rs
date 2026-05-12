@@ -94,8 +94,17 @@ fn storage_can_crud_api_key_active_account() {
         .expect("active account exists");
     assert_eq!(loaded.consecutive_real_errors, 0);
 
+    let mismatch = storage
+        .clear_api_key_active_account_if_matches("key-1", "acc-other", "mismatch")
+        .expect("clear mismatch");
+    assert!(!mismatch);
+    assert!(storage
+        .get_api_key_active_account("key-1")
+        .expect("load after mismatch")
+        .is_some());
+
     storage
-        .clear_api_key_active_account("key-1", "test_clear")
+        .clear_api_key_active_account_if_matches("key-1", "acc-1", "test_clear")
         .expect("clear active account");
     assert!(storage
         .get_api_key_active_account("key-1")

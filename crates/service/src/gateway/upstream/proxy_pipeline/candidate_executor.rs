@@ -129,9 +129,10 @@ fn respond_terminal_attempt(
 ) -> Result<CandidateExecutionResult, String> {
     let now = codexmanager_core::storage::now_ts();
     if super::super::super::active_account::is_direct_clear_error(message.as_str()) {
-        let _ = super::super::super::active_account::clear_active_account(
+        let _ = super::super::super::active_account::clear_active_account_if_matches(
             context.storage(),
             context.key_id(),
+            account_id,
             message.as_str(),
         );
     } else if super::super::super::active_account::is_transient_error(message.as_str())

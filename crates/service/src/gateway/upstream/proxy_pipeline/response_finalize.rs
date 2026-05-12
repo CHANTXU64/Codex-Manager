@@ -320,9 +320,10 @@ pub(super) fn finalize_upstream_response(
         );
     } else if let Some(error) = final_error.as_deref() {
         if super::super::super::active_account::is_direct_clear_error(error) {
-            let _ = super::super::super::active_account::clear_active_account(
+            let _ = super::super::super::active_account::clear_active_account_if_matches(
                 context.storage(),
                 context.key_id(),
+                account_id,
                 error,
             );
         } else if super::super::super::active_account::is_transient_error(error)

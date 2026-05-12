@@ -81,6 +81,21 @@ impl Storage {
         Ok(())
     }
 
+    pub fn clear_api_key_active_account_if_matches(
+        &self,
+        key_id: &str,
+        active_account_id: &str,
+        _reason: &str,
+    ) -> rusqlite::Result<bool> {
+        let updated = self.conn.execute(
+            "DELETE FROM api_key_active_accounts
+             WHERE key_id = ?1
+               AND active_account_id = ?2",
+            params![key_id, active_account_id],
+        )?;
+        Ok(updated > 0)
+    }
+
     pub fn increment_api_key_active_account_real_error(
         &self,
         key_id: &str,
