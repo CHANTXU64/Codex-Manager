@@ -1,6 +1,6 @@
 use codexmanager_core::storage::{
-    now_ts, Account, ApiKey, Event, RequestLog, RequestTokenStat, Storage, Token,
-    UsageSnapshotRecord,
+    now_ts, Account, ApiKey, ApiKeyActiveAccount, Event, RequestLog, RequestTokenStat, Storage,
+    Token, UsageSnapshotRecord,
 };
 
 /// 函数 `storage_can_insert_account_and_token`
@@ -45,6 +45,62 @@ fn storage_can_insert_account_and_token() {
 
     assert_eq!(storage.account_count().expect("count accounts"), 1);
     assert_eq!(storage.token_count().expect("count tokens"), 1);
+}
+
+#[test]
+fn storage_can_crud_api_key_active_account() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init schema");
+    let now = now_ts();
+    let record = ApiKeyActiveAccount {
+        key_id: "key-1".to_string(),
+        active_account_id: "acc-1".to_string(),
+        active_started_at: now,
+        last_used_at: now,
+        consecutive_real_errors: 0,
+        last_switch_reason: Some("selected_by_weekly_urgency".to_string()),
+        updated_at: now,
+    };
+
+    storage
+        .upsert_api_key_active_account(&record)
+        .expect("upsert active account");
+    let loaded = storage
+        .get_api_key_active_account("key-1")
+        .expect("load active account")
+        .expect("active account exists");
+    assert_eq!(loaded, record);
+
+    let updated = storage
+        .increment_api_key_active_account_real_error("key-1", now + 1, "upstream timeout")
+        .expect("increment error");
+    assert_eq!(updated, 1);
+    let loaded = storage
+        .get_api_key_active_account("key-1")
+        .expect("reload active account")
+        .expect("active account exists");
+    assert_eq!(loaded.consecutive_real_errors, 1);
+    assert_eq!(
+        loaded.last_switch_reason.as_deref(),
+        Some("upstream timeout")
+    );
+
+    storage
+        .reset_api_key_active_account_errors("key-1", now + 2)
+        .expect("reset errors");
+    let loaded = storage
+        .get_api_key_active_account("key-1")
+        .expect("reload reset active account")
+        .expect("active account exists");
+    assert_eq!(loaded.consecutive_real_errors, 0);
+
+    storage
+        .clear_api_key_active_account("key-1", "test_clear")
+        .expect("clear active account");
+    assert!(storage
+        .get_api_key_active_account("key-1")
+        .expect("load cleared active account")
+        .is_none());
 }
 
 /// 函数 `storage_can_find_token_and_account_by_account_id`

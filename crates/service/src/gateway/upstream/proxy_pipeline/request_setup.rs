@@ -2,7 +2,9 @@ use codexmanager_core::storage::{Account, ConversationBinding, Token};
 
 use super::super::super::IncomingHeaderSnapshot;
 use crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE;
-use crate::gateway::conversation_binding::ConversationRoutingContext;
+use crate::gateway::conversation_binding::{
+    CandidateRotationPlan, CandidateRotationSource, ConversationRoutingContext,
+};
 
 pub(in super::super) struct UpstreamRequestSetup {
     pub(in super::super) upstream_base: String,
@@ -40,7 +42,7 @@ pub(in super::super) fn prepare_request_setup(
     platform_key_hash: &str,
     local_conversation_id: Option<&str>,
     conversation_binding: Option<&ConversationBinding>,
-    model_for_log: Option<&str>,
+    _model_for_log: Option<&str>,
     trace_id: &str,
 ) -> UpstreamRequestSetup {
     let upstream_base = super::super::super::resolve_upstream_base_url();
@@ -59,12 +61,11 @@ pub(in super::super) fn prepare_request_setup(
         );
     let anthropic_has_thread_anchor = protocol_type == PROTOCOL_ANTHROPIC_NATIVE
         && (has_prompt_cache_key || conversation_routing.is_some());
-    let rotation_plan = super::super::super::conversation_binding::apply_candidate_rotation(
-        candidates,
-        conversation_routing.as_ref(),
-        key_id,
-        model_for_log,
-    );
+    let rotation_plan = CandidateRotationPlan {
+        source: CandidateRotationSource::ActiveAccount,
+        strategy_label: "active_account",
+        strategy_applied: false,
+    };
     let candidate_order = candidates
         .iter()
         .map(|(account, _)| format!("{}#sort={}", account.id, account.sort))

@@ -518,6 +518,31 @@ pub(in super::super) fn proxy_validated_request(
         }
         CandidatePrecheckResult::Responded => return Ok(()),
     };
+    match super::super::active_account::apply_active_account_to_candidates(
+        &storage,
+        key_id.as_str(),
+        &mut candidates,
+        codexmanager_core::storage::now_ts(),
+    ) {
+        Ok(Some(decision)) => {
+            log::info!(
+                "event=gateway_active_account_selected trace_id={} key_id={} account_id={} reason={:?}",
+                trace_id,
+                key_id,
+                decision.account_id,
+                decision.reason
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            log::warn!(
+                "event=gateway_active_account_select_failed trace_id={} key_id={} err={}",
+                trace_id,
+                key_id,
+                err
+            );
+        }
+    }
     let setup = prepare_request_setup(
         path.as_str(),
         protocol_type.as_str(),

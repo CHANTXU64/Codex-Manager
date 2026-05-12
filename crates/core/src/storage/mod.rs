@@ -7,6 +7,7 @@ mod account_metadata;
 mod account_subscriptions;
 mod accounts;
 mod aggregate_apis;
+mod api_key_active_accounts;
 mod api_key_quota_limits;
 mod api_keys;
 mod conversation_bindings;
@@ -308,6 +309,17 @@ pub struct ApiKey {
     pub status: String,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiKeyActiveAccount {
+    pub key_id: String,
+    pub active_account_id: String,
+    pub active_started_at: i64,
+    pub last_used_at: i64,
+    pub consecutive_real_errors: i64,
+    pub last_switch_reason: Option<String>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -785,6 +797,11 @@ impl Storage {
             include_str!("../../migrations/056_quota_pools.sql"),
             |s| s.ensure_quota_pool_tables(),
         )?;
+        self.apply_sql_or_compat_migration(
+            "057_api_key_active_accounts",
+            include_str!("../../migrations/057_api_key_active_accounts.sql"),
+            |s| s.ensure_api_key_active_accounts_table(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_secrets_table()?;
@@ -799,6 +816,7 @@ impl Storage {
         self.ensure_model_catalog_models_table()?;
         self.ensure_account_subscriptions_table()?;
         self.ensure_quota_pool_tables()?;
+        self.ensure_api_key_active_accounts_table()?;
         Ok(())
     }
 

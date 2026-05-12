@@ -303,6 +303,40 @@ pub(super) fn finalize_upstream_response(
         started_at.elapsed().as_millis(),
         attempted_account_ids,
     );
+    let now = codexmanager_core::storage::now_ts();
+    if client_delivery_failed {
+        let _ = super::super::super::active_account::record_active_account_success(
+            context.storage(),
+            context.key_id(),
+            account_id,
+            now,
+        );
+    } else if status_for_log < 400 && final_error.is_none() {
+        let _ = super::super::super::active_account::record_active_account_success(
+            context.storage(),
+            context.key_id(),
+            account_id,
+            now,
+        );
+    } else if let Some(error) = final_error.as_deref() {
+        if super::super::super::active_account::is_direct_clear_error(error) {
+            let _ = super::super::super::active_account::clear_active_account(
+                context.storage(),
+                context.key_id(),
+                error,
+            );
+        } else if super::super::super::active_account::is_transient_error(error)
+            && !super::super::super::active_account::is_client_disconnect_error(error)
+        {
+            let _ = super::super::super::active_account::record_active_account_real_error(
+                context.storage(),
+                context.key_id(),
+                account_id,
+                error,
+                now,
+            );
+        }
+    }
     if gateway_failover {
         return Ok(FinalizeUpstreamResponseOutcome::Failover);
     }
