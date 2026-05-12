@@ -62,6 +62,8 @@ pub(crate) fn error_message_for_client(
     message
 }
 
+#[path = "routing/active_account.rs"]
+mod active_account;
 mod anchor_fingerprint;
 mod concurrency;
 #[path = "routing/conversation_binding.rs"]

@@ -84,6 +84,14 @@ impl<'a> GatewayUpstreamExecutionContext<'a> {
         self.protocol_type
     }
 
+    pub(in super::super) fn storage(&self) -> &Storage {
+        self.storage
+    }
+
+    pub(in super::super) fn key_id(&self) -> &str {
+        self.key_id
+    }
+
     /// 函数 `should_skip_candidate`
     ///
     /// 作者: gaohongshun

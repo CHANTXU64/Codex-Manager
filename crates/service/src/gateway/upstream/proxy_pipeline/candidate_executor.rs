@@ -127,6 +127,15 @@ fn respond_terminal_attempt(
     model_for_log: Option<&str>,
     attempted_account_ids: Option<&[String]>,
 ) -> Result<CandidateExecutionResult, String> {
+    let now = codexmanager_core::storage::now_ts();
+    let _ = super::super::super::active_account::record_active_account_terminal_outcome(
+        context.storage(),
+        context.key_id(),
+        account_id,
+        status_code,
+        Some(message.as_str()),
+        now,
+    );
     finalize_terminal_candidate(
         request,
         context,
