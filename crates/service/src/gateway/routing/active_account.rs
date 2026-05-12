@@ -167,6 +167,26 @@ pub(crate) fn clear_active_account_if_matches(
         .map_err(|err| format!("clear active account failed: {err}"))
 }
 
+pub(crate) fn record_active_account_terminal_error(
+    storage: &Storage,
+    key_id: &str,
+    account_id: &str,
+    error: &str,
+    now: i64,
+) -> Result<(), String> {
+    if is_client_disconnect_error(error) {
+        return Ok(());
+    }
+    if is_direct_clear_error(error) {
+        let _ = clear_active_account_if_matches(storage, key_id, account_id, error)?;
+        return Ok(());
+    }
+    if is_transient_error(error) {
+        let _ = record_active_account_real_error(storage, key_id, account_id, error, now)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn is_client_disconnect_error(message: &str) -> bool {
     let normalized = message.trim().to_ascii_lowercase();
     normalized.contains("broken pipe")
@@ -421,11 +441,11 @@ mod tests {
         let storage = Storage::open_in_memory().expect("open");
         storage.init().expect("init");
         let now = 10_000;
-        let candidates = vec![(account("acc-1", 0), token("acc-1"))];
+        let candidates = vec![(account("acc-expiry-only", 0), token("acc-expiry-only"))];
         storage
             .upsert_api_key_active_account(&ApiKeyActiveAccount {
                 key_id: "key-1".to_string(),
-                active_account_id: "acc-1".to_string(),
+                active_account_id: "acc-expiry-only".to_string(),
                 active_started_at: now - ACTIVE_ACCOUNT_MAX_STICKY_SECS - 1,
                 last_used_at: now,
                 consecutive_real_errors: 0,
@@ -658,5 +678,165 @@ mod tests {
             .get_api_key_active_account("key-direct-clear")
             .expect("load cleared")
             .is_none());
+    }
+
+    #[test]
+    fn gateway_candidate_entry_selects_and_reuses_same_key_active_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .insert_usage_snapshot(&usage("acc-entry-a", 10.0, Some(20.0), Some(now + 3600)))
+            .expect("usage a");
+        storage
+            .insert_usage_snapshot(&usage(
+                "acc-entry-b",
+                10.0,
+                Some(20.0),
+                Some(now + 6 * 86_400),
+            ))
+            .expect("usage b");
+        let mut first = vec![
+            (account("acc-entry-b", 1), token("acc-entry-b")),
+            (account("acc-entry-a", 0), token("acc-entry-a")),
+        ];
+
+        let selected = apply_active_account_to_candidates(&storage, "key-entry", &mut first, now)
+            .expect("apply")
+            .expect("decision");
+        let mut second = vec![
+            (account("acc-entry-b", 1), token("acc-entry-b")),
+            (account("acc-entry-a", 0), token("acc-entry-a")),
+        ];
+        let reused =
+            apply_active_account_to_candidates(&storage, "key-entry", &mut second, now + 10)
+                .expect("apply reuse")
+                .expect("decision");
+
+        assert_eq!(selected.account_id, "acc-entry-a");
+        assert_eq!(first[0].0.id, "acc-entry-a");
+        assert_eq!(reused.reason, ActiveAccountDecisionReason::Reused);
+        assert_eq!(second[0].0.id, "acc-entry-a");
+    }
+
+    #[test]
+    fn gateway_candidate_entry_keeps_key_scoped_active_accounts_independent() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        let candidates = vec![
+            (account("acc-key-a", 0), token("acc-key-a")),
+            (account("acc-key-b", 1), token("acc-key-b")),
+        ];
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-a".to_string(),
+                active_account_id: "acc-key-a".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 0,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed key a");
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-b".to_string(),
+                active_account_id: "acc-key-b".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 0,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed key b");
+        let mut key_a_candidates = candidates.clone();
+        let mut key_b_candidates = candidates;
+
+        apply_active_account_to_candidates(&storage, "key-a", &mut key_a_candidates, now + 1)
+            .expect("apply key a");
+        apply_active_account_to_candidates(&storage, "key-b", &mut key_b_candidates, now + 1)
+            .expect("apply key b");
+
+        assert_eq!(key_a_candidates[0].0.id, "acc-key-a");
+        assert_eq!(key_b_candidates[0].0.id, "acc-key-b");
+    }
+
+    #[test]
+    fn transient_errors_below_threshold_keep_active_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-transient".to_string(),
+                active_account_id: "acc-transient-a".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 0,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed");
+
+        record_active_account_terminal_error(
+            &storage,
+            "key-transient",
+            "acc-transient-a",
+            "upstream timeout",
+            now + 1,
+        )
+        .expect("record first");
+        record_active_account_terminal_error(
+            &storage,
+            "key-transient",
+            "acc-transient-a",
+            "upstream timeout",
+            now + 2,
+        )
+        .expect("record second");
+        let record = storage
+            .get_api_key_active_account("key-transient")
+            .expect("load")
+            .expect("record");
+
+        assert_eq!(record.active_account_id, "acc-transient-a");
+        assert_eq!(record.consecutive_real_errors, 2);
+        assert!(!crate::gateway::is_account_in_cooldown("acc-transient-a"));
+    }
+
+    #[test]
+    fn client_disconnect_terminal_error_does_not_mutate_active_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-disconnect".to_string(),
+                active_account_id: "acc-disconnect".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 1,
+                last_switch_reason: Some("prior".to_string()),
+                updated_at: now,
+            })
+            .expect("seed");
+
+        record_active_account_terminal_error(
+            &storage,
+            "key-disconnect",
+            "acc-disconnect",
+            "broken pipe",
+            now + 1,
+        )
+        .expect("record disconnect");
+        let record = storage
+            .get_api_key_active_account("key-disconnect")
+            .expect("load")
+            .expect("record");
+
+        assert_eq!(record.active_account_id, "acc-disconnect");
+        assert_eq!(record.consecutive_real_errors, 1);
+        assert_eq!(record.last_switch_reason.as_deref(), Some("prior"));
     }
 }

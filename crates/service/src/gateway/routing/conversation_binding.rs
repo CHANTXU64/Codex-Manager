@@ -440,6 +440,29 @@ mod tests {
     };
     use codexmanager_core::storage::{Account, ConversationBinding, Storage, Token};
 
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_deref() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     /// 函数 `sample_account`
     ///
     /// 作者: gaohongshun
@@ -543,6 +566,38 @@ mod tests {
         )
         .expect("routing context");
 
+        assert!(!actual.binding_selected);
+        assert_eq!(candidates[0].0.id, "acc-1");
+        assert_eq!(candidates[1].0.id, "acc-2");
+    }
+
+    #[test]
+    fn manual_preferred_account_does_not_rotate_candidates_before_active_account() {
+        let _lock = crate::test_env_guard();
+        let mut db_path = std::env::temp_dir();
+        db_path.push(format!(
+            "codexmanager-manual-active-test-{}.db",
+            std::process::id()
+        ));
+        let _db_guard = EnvGuard::set("CODEXMANAGER_DB_PATH", db_path.to_string_lossy().as_ref());
+        let storage = Storage::open(&db_path).expect("open db");
+        storage.init().expect("init db");
+        storage
+            .insert_account(&sample_account("acc-2", 1))
+            .expect("insert preferred account");
+        super::super::set_manual_preferred_account("acc-2").expect("set manual preferred");
+        let mut candidates = vec![
+            (sample_account("acc-1", 0), sample_token("acc-1")),
+            (sample_account("acc-2", 1), sample_token("acc-2")),
+        ];
+
+        let actual =
+            prepare_conversation_routing("key-hash-1", Some("conv-1"), None, &mut candidates)
+                .expect("routing context");
+
+        super::super::clear_manual_preferred_account();
+        let _ = std::fs::remove_file(db_path);
+        assert_eq!(actual.manual_preferred_account_id.as_deref(), Some("acc-2"));
         assert!(!actual.binding_selected);
         assert_eq!(candidates[0].0.id, "acc-1");
         assert_eq!(candidates[1].0.id, "acc-2");

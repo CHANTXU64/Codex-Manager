@@ -128,24 +128,13 @@ fn respond_terminal_attempt(
     attempted_account_ids: Option<&[String]>,
 ) -> Result<CandidateExecutionResult, String> {
     let now = codexmanager_core::storage::now_ts();
-    if super::super::super::active_account::is_direct_clear_error(message.as_str()) {
-        let _ = super::super::super::active_account::clear_active_account_if_matches(
-            context.storage(),
-            context.key_id(),
-            account_id,
-            message.as_str(),
-        );
-    } else if super::super::super::active_account::is_transient_error(message.as_str())
-        && !super::super::super::active_account::is_client_disconnect_error(message.as_str())
-    {
-        let _ = super::super::super::active_account::record_active_account_real_error(
-            context.storage(),
-            context.key_id(),
-            account_id,
-            message.as_str(),
-            now,
-        );
-    }
+    let _ = super::super::super::active_account::record_active_account_terminal_error(
+        context.storage(),
+        context.key_id(),
+        account_id,
+        message.as_str(),
+        now,
+    );
     finalize_terminal_candidate(
         request,
         context,
