@@ -144,22 +144,38 @@ pub(crate) fn clear_active_account_if_matches(
         .map_err(|err| format!("clear active account failed: {err}"))
 }
 
-pub(crate) fn record_active_account_terminal_error(
+pub(crate) fn record_active_account_terminal_outcome(
     storage: &Storage,
     key_id: &str,
     account_id: &str,
-    error: &str,
+    status_code: u16,
+    error: Option<&str>,
     now: i64,
 ) -> Result<(), String> {
-    if is_client_disconnect_error(error) {
+    if error.is_some_and(is_client_disconnect_error) {
         return Ok(());
     }
-    if is_direct_clear_error(error) {
-        let _ = clear_active_account_if_matches(storage, key_id, account_id, error)?;
+    if error.is_some_and(is_direct_clear_error) || matches!(status_code, 401 | 403) {
+        let reason = error
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("http_status_{status_code}"));
+        let _ = clear_active_account_if_matches(storage, key_id, account_id, reason.as_str())?;
         return Ok(());
     }
-    if is_transient_error(error) {
-        let _ = record_active_account_real_error(storage, key_id, account_id, error, now)?;
+    if status_code == 429 {
+        super::mark_account_cooldown(account_id, super::CooldownReason::RateLimited);
+        let reason = error
+            .map(str::to_string)
+            .unwrap_or_else(|| "http_status_429".to_string());
+        let _ = clear_active_account_if_matches(storage, key_id, account_id, reason.as_str())?;
+        return Ok(());
+    }
+    if error.is_some_and(is_transient_error) || matches!(status_code, 500..=599) {
+        let reason = error
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("http_status_{status_code}"));
+        let _ =
+            record_active_account_real_error(storage, key_id, account_id, reason.as_str(), now)?;
     }
     Ok(())
 }
@@ -262,9 +278,10 @@ fn snapshot_is_exhausted(snapshot: Option<&UsageSnapshotRecord>) -> bool {
     let Some(snapshot) = snapshot else {
         return false;
     };
+    let low_quota_threshold = super::selection::low_quota_threshold_percent();
     snapshot
         .used_percent
-        .is_some_and(|pct| pct >= EXHAUSTED_PERCENT)
+        .is_some_and(|pct| pct >= low_quota_threshold)
         || snapshot
             .secondary_used_percent
             .is_some_and(|pct| pct >= EXHAUSTED_PERCENT)
@@ -494,6 +511,33 @@ mod tests {
             get_or_select_active_account(&storage, "key-1", &candidates, now).expect("select");
 
         assert_eq!(selected.account_id, "acc-b");
+    }
+
+    #[test]
+    fn primary_low_quota_threshold_account_is_not_selected_by_weekly_urgency() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .insert_usage_snapshot(&usage("acc-low-quota-a", 98.0, Some(0.0), Some(now + 3600)))
+            .expect("usage a");
+        storage
+            .insert_usage_snapshot(&usage(
+                "acc-low-quota-b",
+                20.0,
+                Some(80.0),
+                Some(now + 6 * 86_400),
+            ))
+            .expect("usage b");
+        let candidates = vec![
+            (account("acc-low-quota-a", 0), token("acc-low-quota-a")),
+            (account("acc-low-quota-b", 1), token("acc-low-quota-b")),
+        ];
+
+        let selected = get_or_select_active_account(&storage, "key-low-quota", &candidates, now)
+            .expect("select");
+
+        assert_eq!(selected.account_id, "acc-low-quota-b");
     }
 
     #[test]
@@ -759,19 +803,21 @@ mod tests {
             })
             .expect("seed");
 
-        record_active_account_terminal_error(
+        record_active_account_terminal_outcome(
             &storage,
             "key-transient",
             "acc-transient-a",
-            "upstream timeout",
+            502,
+            Some("upstream timeout"),
             now + 1,
         )
         .expect("record first");
-        record_active_account_terminal_error(
+        record_active_account_terminal_outcome(
             &storage,
             "key-transient",
             "acc-transient-a",
-            "upstream timeout",
+            502,
+            Some("upstream timeout"),
             now + 2,
         )
         .expect("record second");
@@ -830,11 +876,12 @@ mod tests {
             })
             .expect("seed");
 
-        record_active_account_terminal_error(
+        record_active_account_terminal_outcome(
             &storage,
             "key-disconnect",
             "acc-disconnect",
-            "broken pipe",
+            499,
+            Some("broken pipe"),
             now + 1,
         )
         .expect("record disconnect");
@@ -846,6 +893,78 @@ mod tests {
         assert_eq!(record.active_account_id, "acc-disconnect");
         assert_eq!(record.consecutive_real_errors, 1);
         assert_eq!(record.last_switch_reason.as_deref(), Some("prior"));
+    }
+
+    #[test]
+    fn status_fallback_clears_rate_limited_active_account_without_message() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-status-429".to_string(),
+                active_account_id: "acc-status-429".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 0,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed");
+
+        record_active_account_terminal_outcome(
+            &storage,
+            "key-status-429",
+            "acc-status-429",
+            429,
+            None,
+            now + 1,
+        )
+        .expect("record status");
+
+        assert!(storage
+            .get_api_key_active_account("key-status-429")
+            .expect("load")
+            .is_none());
+        assert!(crate::gateway::is_account_in_cooldown("acc-status-429"));
+    }
+
+    #[test]
+    fn status_fallback_records_5xx_as_real_error_without_message() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-status-500".to_string(),
+                active_account_id: "acc-status-500".to_string(),
+                active_started_at: now,
+                last_used_at: now,
+                consecutive_real_errors: 0,
+                last_switch_reason: None,
+                updated_at: now,
+            })
+            .expect("seed");
+
+        record_active_account_terminal_outcome(
+            &storage,
+            "key-status-500",
+            "acc-status-500",
+            500,
+            None,
+            now + 1,
+        )
+        .expect("record status");
+        let record = storage
+            .get_api_key_active_account("key-status-500")
+            .expect("load")
+            .expect("record");
+
+        assert_eq!(record.consecutive_real_errors, 1);
+        assert_eq!(
+            record.last_switch_reason.as_deref(),
+            Some("http_status_500")
+        );
     }
 
     #[test]

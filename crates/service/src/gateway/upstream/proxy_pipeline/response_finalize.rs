@@ -98,6 +98,13 @@ fn derive_status_for_log(
     }
 }
 
+fn should_mark_stream_failure_cooldown(
+    upstream_stream_failed: bool,
+    client_delivery_failed: bool,
+) -> bool {
+    upstream_stream_failed && !client_delivery_failed
+}
+
 /// 函数 `respond_total_timeout`
 ///
 /// 作者: gaohongshun
@@ -277,7 +284,7 @@ pub(super) fn finalize_upstream_response(
         client_delivery_failed,
     );
 
-    if upstream_stream_failed {
+    if should_mark_stream_failure_cooldown(upstream_stream_failed, client_delivery_failed) {
         super::super::super::mark_account_cooldown(
             account_id,
             super::super::super::CooldownReason::Network,
@@ -318,12 +325,13 @@ pub(super) fn finalize_upstream_response(
             account_id,
             now,
         );
-    } else if let Some(error) = final_error.as_deref() {
-        let _ = super::super::super::active_account::record_active_account_terminal_error(
+    } else if status_for_log >= 400 || final_error.is_some() {
+        let _ = super::super::super::active_account::record_active_account_terminal_outcome(
             context.storage(),
             context.key_id(),
             account_id,
-            error,
+            status_for_log,
+            final_error.as_deref(),
             now,
         );
     }
@@ -335,7 +343,10 @@ pub(super) fn finalize_upstream_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_final_error, derive_status_for_log, is_client_disconnect_error};
+    use super::{
+        derive_final_error, derive_status_for_log, is_client_disconnect_error,
+        should_mark_stream_failure_cooldown,
+    };
 
     #[test]
     fn derive_final_error_prefers_upstream_hint_then_http_error_then_bridge_error() {
@@ -398,5 +409,12 @@ mod tests {
         assert!(is_client_disconnect_error("broken pipe"));
         assert!(is_client_disconnect_error("connection reset by peer"));
         assert!(!is_client_disconnect_error("upstream timeout"));
+    }
+
+    #[test]
+    fn stream_failure_cooldown_ignores_client_disconnects() {
+        assert!(!should_mark_stream_failure_cooldown(true, true));
+        assert!(should_mark_stream_failure_cooldown(true, false));
+        assert!(!should_mark_stream_failure_cooldown(false, true));
     }
 }

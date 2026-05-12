@@ -14,7 +14,7 @@ const DEFAULT_CANDIDATE_CACHE_TTL_MS: u64 = 500;
 const CANDIDATE_CACHE_TTL_ENV: &str = "CODEXMANAGER_CANDIDATE_CACHE_TTL_MS";
 // OpenAI 在 used_percent 未到 100 时就会触发 usage limit（常见于 ChatGPT Plus OAuth
 // 账号的 5 小时窗口）。将快要耗尽的账号降权到候选列表尾部，避免网关反复挑到它。
-const LOW_QUOTA_THRESHOLD_ENV: &str = "CODEXMANAGER_LOW_QUOTA_THRESHOLD_PERCENT";
+pub(crate) const LOW_QUOTA_THRESHOLD_ENV: &str = "CODEXMANAGER_LOW_QUOTA_THRESHOLD_PERCENT";
 const DEFAULT_LOW_QUOTA_THRESHOLD_PERCENT: f64 = 95.0;
 
 #[derive(Clone)]
@@ -124,7 +124,7 @@ fn is_low_quota_account(
     primary_low || secondary_low
 }
 
-fn low_quota_threshold_percent() -> f64 {
+pub(crate) fn low_quota_threshold_percent() -> f64 {
     std::env::var(LOW_QUOTA_THRESHOLD_ENV)
         .ok()
         .and_then(|raw| raw.trim().parse::<f64>().ok())
