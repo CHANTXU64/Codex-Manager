@@ -9,6 +9,7 @@ const DEFAULT_ACCOUNT_COOLDOWN_429_SECS: i64 = 45;
 const DEFAULT_ACCOUNT_COOLDOWN_5XX_SECS: i64 = 30;
 const DEFAULT_ACCOUNT_COOLDOWN_4XX_SECS: i64 = DEFAULT_ACCOUNT_COOLDOWN_SECS;
 const DEFAULT_ACCOUNT_COOLDOWN_CHALLENGE_SECS: i64 = 6;
+const ACTIVE_ACCOUNT_REAL_ERROR_THRESHOLD_COOLDOWN_SECS: i64 = 180;
 const ACCOUNT_RATE_LIMIT_COOLDOWN_LADDER_SECS: [i64; 4] =
     [DEFAULT_ACCOUNT_COOLDOWN_429_SECS, 300, 1800, 7200];
 // 中文注释：offense 只用于“短时间内持续 429”场景；超过该时间视为新一轮，避免长期记仇导致误伤。
@@ -51,7 +52,9 @@ pub(super) enum CooldownReason {
 fn cooldown_secs_for_reason(reason: CooldownReason) -> i64 {
     match reason {
         CooldownReason::Default => DEFAULT_ACCOUNT_COOLDOWN_SECS,
-        CooldownReason::ActiveAccountRealErrorThreshold => DEFAULT_ACCOUNT_COOLDOWN_SECS,
+        CooldownReason::ActiveAccountRealErrorThreshold => {
+            ACTIVE_ACCOUNT_REAL_ERROR_THRESHOLD_COOLDOWN_SECS
+        }
         CooldownReason::Network => DEFAULT_ACCOUNT_COOLDOWN_NETWORK_SECS,
         CooldownReason::RateLimited => DEFAULT_ACCOUNT_COOLDOWN_429_SECS,
         CooldownReason::Upstream5xx => DEFAULT_ACCOUNT_COOLDOWN_5XX_SECS,

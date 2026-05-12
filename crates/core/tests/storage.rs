@@ -85,8 +85,56 @@ fn storage_can_crud_api_key_active_account() {
         Some("upstream timeout")
     );
 
+    let mismatch_increment = storage
+        .increment_api_key_active_account_real_error_if_matches(
+            "key-1",
+            "acc-other",
+            now + 2,
+            "stale timeout",
+        )
+        .expect("increment mismatch");
+    assert_eq!(mismatch_increment, 0);
+    let matched_increment = storage
+        .increment_api_key_active_account_real_error_if_matches(
+            "key-1",
+            "acc-1",
+            now + 3,
+            "matched timeout",
+        )
+        .expect("increment match");
+    assert_eq!(matched_increment, 1);
+    let loaded = storage
+        .get_api_key_active_account("key-1")
+        .expect("reload matched increment")
+        .expect("active account exists");
+    assert_eq!(loaded.consecutive_real_errors, 2);
+    assert_eq!(
+        loaded.last_switch_reason.as_deref(),
+        Some("matched timeout")
+    );
+
     storage
-        .reset_api_key_active_account_errors("key-1", now + 2)
+        .touch_api_key_active_account_if_matches("key-1", "acc-other", now + 4)
+        .expect("touch mismatch");
+    let loaded = storage
+        .get_api_key_active_account("key-1")
+        .expect("reload touch mismatch")
+        .expect("active account exists");
+    assert_eq!(loaded.consecutive_real_errors, 2);
+
+    let touched = storage
+        .touch_api_key_active_account_if_matches("key-1", "acc-1", now + 5)
+        .expect("touch match");
+    assert!(touched);
+    let loaded = storage
+        .get_api_key_active_account("key-1")
+        .expect("reload touch match")
+        .expect("active account exists");
+    assert_eq!(loaded.consecutive_real_errors, 0);
+    assert_eq!(loaded.last_used_at, now + 5);
+
+    storage
+        .reset_api_key_active_account_errors("key-1", now + 6)
         .expect("reset errors");
     let loaded = storage
         .get_api_key_active_account("key-1")

@@ -99,19 +99,9 @@ pub(crate) fn record_active_account_success(
     account_id: &str,
     now: i64,
 ) -> Result<(), String> {
-    if let Some(mut record) = storage
-        .get_api_key_active_account(key_id)
-        .map_err(|err| format!("load active account failed: {err}"))?
-    {
-        if record.active_account_id == account_id {
-            record.last_used_at = now;
-            record.consecutive_real_errors = 0;
-            record.updated_at = now;
-            storage
-                .upsert_api_key_active_account(&record)
-                .map_err(|err| format!("touch active account failed: {err}"))?;
-        }
-    }
+    storage
+        .touch_api_key_active_account_if_matches(key_id, account_id, now)
+        .map_err(|err| format!("touch active account failed: {err}"))?;
     Ok(())
 }
 
@@ -122,38 +112,26 @@ pub(crate) fn record_active_account_real_error(
     reason: &str,
     now: i64,
 ) -> Result<bool, String> {
-    let Some(record) = storage
-        .get_api_key_active_account(key_id)
-        .map_err(|err| format!("load active account failed: {err}"))?
-    else {
-        return Ok(false);
-    };
-    if record.active_account_id != account_id {
+    let updated = storage
+        .increment_api_key_active_account_real_error_if_matches(key_id, account_id, now, reason)
+        .map_err(|err| format!("increment active account errors failed: {err}"))?;
+    if updated == 0 {
         return Ok(false);
     }
-    storage
-        .increment_api_key_active_account_real_error(key_id, now, reason)
-        .map_err(|err| format!("increment active account errors failed: {err}"))?;
-    let updated_errors = record.consecutive_real_errors + 1;
-    if updated_errors >= MAX_CONSECUTIVE_REAL_ERRORS {
+    let reached_threshold = storage
+        .get_api_key_active_account(key_id)
+        .map_err(|err| format!("load active account failed: {err}"))?
+        .filter(|record| record.active_account_id == account_id)
+        .is_some_and(|record| record.consecutive_real_errors >= MAX_CONSECUTIVE_REAL_ERRORS);
+    if reached_threshold {
         super::mark_account_cooldown(
             account_id,
             super::CooldownReason::ActiveAccountRealErrorThreshold,
         );
-        clear_active_account(storage, key_id, reason)?;
+        clear_active_account_if_matches(storage, key_id, account_id, reason)?;
         return Ok(true);
     }
     Ok(false)
-}
-
-pub(crate) fn clear_active_account(
-    storage: &Storage,
-    key_id: &str,
-    reason: &str,
-) -> Result<(), String> {
-    storage
-        .clear_api_key_active_account(key_id, reason)
-        .map_err(|err| format!("clear active account failed: {err}"))
 }
 
 pub(crate) fn clear_active_account_if_matches(
@@ -838,5 +816,72 @@ mod tests {
         assert_eq!(record.active_account_id, "acc-disconnect");
         assert_eq!(record.consecutive_real_errors, 1);
         assert_eq!(record.last_switch_reason.as_deref(), Some("prior"));
+    }
+
+    #[test]
+    fn stale_success_does_not_restore_previous_active_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-cas-success".to_string(),
+                active_account_id: "acc-cas-b".to_string(),
+                active_started_at: now + 1,
+                last_used_at: now + 1,
+                consecutive_real_errors: 0,
+                last_switch_reason: Some("selected_by_weekly_urgency".to_string()),
+                updated_at: now + 1,
+            })
+            .expect("seed b");
+
+        record_active_account_success(&storage, "key-cas-success", "acc-cas-a", now + 2)
+            .expect("stale success");
+        let record = storage
+            .get_api_key_active_account("key-cas-success")
+            .expect("load")
+            .expect("record");
+
+        assert_eq!(record.active_account_id, "acc-cas-b");
+        assert_eq!(record.last_used_at, now + 1);
+    }
+
+    #[test]
+    fn stale_transient_error_does_not_increment_new_active_account() {
+        let storage = Storage::open_in_memory().expect("open");
+        storage.init().expect("init");
+        let now = 10_000;
+        storage
+            .upsert_api_key_active_account(&ApiKeyActiveAccount {
+                key_id: "key-cas-error".to_string(),
+                active_account_id: "acc-cas-b".to_string(),
+                active_started_at: now + 1,
+                last_used_at: now + 1,
+                consecutive_real_errors: 0,
+                last_switch_reason: Some("selected_by_weekly_urgency".to_string()),
+                updated_at: now + 1,
+            })
+            .expect("seed b");
+
+        let cleared = record_active_account_real_error(
+            &storage,
+            "key-cas-error",
+            "acc-cas-a",
+            "upstream timeout",
+            now + 2,
+        )
+        .expect("stale error");
+        let record = storage
+            .get_api_key_active_account("key-cas-error")
+            .expect("load")
+            .expect("record");
+
+        assert!(!cleared);
+        assert_eq!(record.active_account_id, "acc-cas-b");
+        assert_eq!(record.consecutive_real_errors, 0);
+        assert_eq!(
+            record.last_switch_reason.as_deref(),
+            Some("selected_by_weekly_urgency")
+        );
     }
 }

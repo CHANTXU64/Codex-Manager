@@ -112,6 +112,42 @@ impl Storage {
         )
     }
 
+    pub fn increment_api_key_active_account_real_error_if_matches(
+        &self,
+        key_id: &str,
+        active_account_id: &str,
+        updated_at: i64,
+        reason: &str,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            "UPDATE api_key_active_accounts
+             SET consecutive_real_errors = consecutive_real_errors + 1,
+                 last_switch_reason = ?3,
+                 updated_at = ?4
+             WHERE key_id = ?1
+               AND active_account_id = ?2",
+            params![key_id, active_account_id, reason, updated_at],
+        )
+    }
+
+    pub fn touch_api_key_active_account_if_matches(
+        &self,
+        key_id: &str,
+        active_account_id: &str,
+        updated_at: i64,
+    ) -> rusqlite::Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE api_key_active_accounts
+             SET last_used_at = ?3,
+                 consecutive_real_errors = 0,
+                 updated_at = ?3
+             WHERE key_id = ?1
+               AND active_account_id = ?2",
+            params![key_id, active_account_id, updated_at],
+        )?;
+        Ok(updated > 0)
+    }
+
     pub fn reset_api_key_active_account_errors(
         &self,
         key_id: &str,
