@@ -893,6 +893,40 @@ export default function SettingsPage() {
       .catch(() => undefined);
   };
 
+  const saveBackgroundTaskTextField = (
+    key: "warmupCronExpression" | "warmupMessage",
+    fallback: string,
+  ) => {
+    if (!snapshot) return;
+    const draftKey = String(key);
+    const sourceValue =
+      backgroundTaskDraft[draftKey] ??
+      String(snapshot.backgroundTasks[key] || fallback);
+    const nextValue = sourceValue.trim() || fallback;
+    if (key === "warmupCronExpression") {
+      const partCount = nextValue.split(/\s+/).filter(Boolean).length;
+      if (partCount !== 5 && partCount !== 6) {
+        toast.error(t("Cron 表达式需要 5 段，或带秒的 6 段"));
+        return;
+      }
+    }
+    void updateSettings
+      .mutateAsync({
+        backgroundTasks: {
+          ...snapshot.backgroundTasks,
+          [key]: nextValue,
+        },
+      })
+      .then(() => {
+        setBackgroundTaskDraft((current) => {
+          const nextDraft = { ...current };
+          delete nextDraft[draftKey];
+          return nextDraft;
+        });
+      })
+      .catch(() => undefined);
+  };
+
   /**
    * 函数 `saveAccountMaxInflightField`
    *
@@ -1704,6 +1738,60 @@ export default function SettingsPage() {
                   </div>
                 </div>
               ))}
+              <div className="grid gap-3 rounded-lg bg-accent/20 p-3 lg:grid-cols-[minmax(180px,240px)_minmax(180px,1fr)_minmax(160px,220px)] lg:items-end">
+                <div className="flex items-center gap-3 lg:self-center">
+                  <Switch
+                    checked={snapshot.backgroundTasks.warmupCronEnabled}
+                    onCheckedChange={(value) =>
+                      updateBackgroundTasks({
+                        warmupCronEnabled: value,
+                      })
+                    }
+                  />
+                  <Label>{t("定时账号预热")}</Label>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>{t("Cron 表达式")}</Label>
+                  <Input
+                    className="h-8 font-mono"
+                    value={
+                      backgroundTaskDraft.warmupCronExpression ??
+                      snapshot.backgroundTasks.warmupCronExpression
+                    }
+                    onChange={(event) =>
+                      setBackgroundTaskDraft((current) => ({
+                        ...current,
+                        warmupCronExpression: event.target.value,
+                      }))
+                    }
+                    onBlur={() =>
+                      saveBackgroundTaskTextField(
+                        "warmupCronExpression",
+                        "0 */4 * * *",
+                      )
+                    }
+                    placeholder="0 */4 * * *"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>{t("预热消息")}</Label>
+                  <Input
+                    className="h-8"
+                    value={
+                      backgroundTaskDraft.warmupMessage ??
+                      snapshot.backgroundTasks.warmupMessage
+                    }
+                    onChange={(event) =>
+                      setBackgroundTaskDraft((current) => ({
+                        ...current,
+                        warmupMessage: event.target.value,
+                      }))
+                    }
+                    onBlur={() => saveBackgroundTaskTextField("warmupMessage", "hi")}
+                    placeholder="hi"
+                  />
+                </div>
+              </div>
             </CardContent>
           </Card>
 

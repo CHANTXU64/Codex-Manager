@@ -180,6 +180,9 @@ pub fn sync_runtime_settings_from_storage() {
         "CODEXMANAGER_HTTP_WORKER_MIN",
         "CODEXMANAGER_HTTP_STREAM_WORKER_FACTOR",
         "CODEXMANAGER_HTTP_STREAM_WORKER_MIN",
+        "CODEXMANAGER_WARMUP_CRON_ENABLED",
+        "CODEXMANAGER_WARMUP_CRON_EXPRESSION",
+        "CODEXMANAGER_WARMUP_MESSAGE",
     ]) {
         if let Some(raw) = settings.get(APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY) {
             match serde_json::from_str::<BackgroundTasksInput>(raw) {

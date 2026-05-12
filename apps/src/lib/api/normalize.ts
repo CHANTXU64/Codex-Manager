@@ -67,6 +67,9 @@ const DEFAULT_BACKGROUND_TASKS: BackgroundTaskSettings = {
   httpWorkerMin: 8,
   httpStreamWorkerFactor: 1,
   httpStreamWorkerMin: 2,
+  warmupCronEnabled: false,
+  warmupCronExpression: "0 */4 * * *",
+  warmupMessage: "hi",
 };
 
 /**
@@ -1573,6 +1576,18 @@ export function normalizeBackgroundTasks(payload: unknown): BackgroundTaskSettin
       source.httpStreamWorkerMin,
       DEFAULT_BACKGROUND_TASKS.httpStreamWorkerMin,
       1
+    ),
+    warmupCronEnabled: asBoolean(
+      source.warmupCronEnabled,
+      DEFAULT_BACKGROUND_TASKS.warmupCronEnabled
+    ),
+    warmupCronExpression: asString(
+      source.warmupCronExpression,
+      DEFAULT_BACKGROUND_TASKS.warmupCronExpression
+    ),
+    warmupMessage: asString(
+      source.warmupMessage,
+      DEFAULT_BACKGROUND_TASKS.warmupMessage
     ),
   };
 }

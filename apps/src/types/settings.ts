@@ -23,6 +23,9 @@ export interface BackgroundTaskSettings {
   httpWorkerMin: number;
   httpStreamWorkerFactor: number;
   httpStreamWorkerMin: number;
+  warmupCronEnabled: boolean;
+  warmupCronExpression: string;
+  warmupMessage: string;
 }
 
 export interface AppSettings {

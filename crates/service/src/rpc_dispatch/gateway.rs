@@ -135,6 +135,9 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 http_worker_min: usize_param(req, "httpWorkerMin"),
                 http_stream_worker_factor: usize_param(req, "httpStreamWorkerFactor"),
                 http_stream_worker_min: usize_param(req, "httpStreamWorkerMin"),
+                warmup_cron_enabled: super::bool_param(req, "warmupCronEnabled"),
+                warmup_cron_expression: super::string_param(req, "warmupCronExpression"),
+                warmup_message: super::string_param(req, "warmupMessage"),
             };
             let input = crate::BackgroundTasksInput {
                 usage_polling_enabled: patch.usage_polling_enabled,
@@ -148,6 +151,9 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 http_worker_min: patch.http_worker_min,
                 http_stream_worker_factor: patch.http_stream_worker_factor,
                 http_stream_worker_min: patch.http_stream_worker_min,
+                warmup_cron_enabled: patch.warmup_cron_enabled,
+                warmup_cron_expression: patch.warmup_cron_expression,
+                warmup_message: patch.warmup_message,
             };
             super::value_or_error(crate::set_gateway_background_tasks(input))
         }

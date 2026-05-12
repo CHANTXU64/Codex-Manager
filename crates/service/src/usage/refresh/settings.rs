@@ -6,16 +6,18 @@ use super::{
     DEFAULT_GATEWAY_KEEPALIVE_INTERVAL_SECS, DEFAULT_HTTP_STREAM_WORKER_FACTOR,
     DEFAULT_HTTP_STREAM_WORKER_MIN, DEFAULT_HTTP_WORKER_FACTOR, DEFAULT_HTTP_WORKER_MIN,
     DEFAULT_TOKEN_REFRESH_POLL_INTERVAL_SECS, DEFAULT_USAGE_POLL_INTERVAL_SECS,
-    DEFAULT_USAGE_REFRESH_WORKERS, ENV_DISABLE_POLLING, ENV_GATEWAY_KEEPALIVE_ENABLED,
-    ENV_GATEWAY_KEEPALIVE_INTERVAL_SECS, ENV_HTTP_STREAM_WORKER_FACTOR, ENV_HTTP_STREAM_WORKER_MIN,
-    ENV_HTTP_WORKER_FACTOR, ENV_HTTP_WORKER_MIN, ENV_TOKEN_REFRESH_POLLING_ENABLED,
-    ENV_TOKEN_REFRESH_POLL_INTERVAL_SECS, ENV_USAGE_POLLING_ENABLED, ENV_USAGE_POLL_INTERVAL_SECS,
-    GATEWAY_KEEPALIVE_ENABLED, GATEWAY_KEEPALIVE_INTERVAL_SECS, HTTP_STREAM_WORKER_FACTOR,
-    HTTP_STREAM_WORKER_MIN, HTTP_WORKER_FACTOR, HTTP_WORKER_MIN,
-    MIN_GATEWAY_KEEPALIVE_INTERVAL_SECS, MIN_TOKEN_REFRESH_POLL_INTERVAL_SECS,
-    MIN_USAGE_POLL_INTERVAL_SECS, TOKEN_REFRESH_POLLING_ENABLED,
-    TOKEN_REFRESH_POLL_INTERVAL_SECS_ATOMIC, USAGE_POLLING_ENABLED, USAGE_POLL_INTERVAL_SECS,
-    USAGE_REFRESH_WORKERS, USAGE_REFRESH_WORKERS_ENV,
+    DEFAULT_USAGE_REFRESH_WORKERS, DEFAULT_WARMUP_CRON_EXPRESSION, DEFAULT_WARMUP_MESSAGE,
+    ENV_DISABLE_POLLING, ENV_GATEWAY_KEEPALIVE_ENABLED, ENV_GATEWAY_KEEPALIVE_INTERVAL_SECS,
+    ENV_HTTP_STREAM_WORKER_FACTOR, ENV_HTTP_STREAM_WORKER_MIN, ENV_HTTP_WORKER_FACTOR,
+    ENV_HTTP_WORKER_MIN, ENV_TOKEN_REFRESH_POLLING_ENABLED, ENV_TOKEN_REFRESH_POLL_INTERVAL_SECS,
+    ENV_USAGE_POLLING_ENABLED, ENV_USAGE_POLL_INTERVAL_SECS, ENV_WARMUP_CRON_ENABLED,
+    ENV_WARMUP_CRON_EXPRESSION, ENV_WARMUP_MESSAGE, GATEWAY_KEEPALIVE_ENABLED,
+    GATEWAY_KEEPALIVE_INTERVAL_SECS, HTTP_STREAM_WORKER_FACTOR, HTTP_STREAM_WORKER_MIN,
+    HTTP_WORKER_FACTOR, HTTP_WORKER_MIN, MIN_GATEWAY_KEEPALIVE_INTERVAL_SECS,
+    MIN_TOKEN_REFRESH_POLL_INTERVAL_SECS, MIN_USAGE_POLL_INTERVAL_SECS,
+    TOKEN_REFRESH_POLLING_ENABLED, TOKEN_REFRESH_POLL_INTERVAL_SECS_ATOMIC, USAGE_POLLING_ENABLED,
+    USAGE_POLL_INTERVAL_SECS, USAGE_REFRESH_WORKERS, USAGE_REFRESH_WORKERS_ENV,
+    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_MESSAGE,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +34,9 @@ pub(crate) struct BackgroundTasksSettings {
     http_worker_min: usize,
     http_stream_worker_factor: usize,
     http_stream_worker_min: usize,
+    warmup_cron_enabled: bool,
+    warmup_cron_expression: String,
+    warmup_message: String,
     requires_restart_keys: Vec<&'static str>,
 }
 
@@ -48,6 +53,9 @@ pub(crate) struct BackgroundTasksSettingsPatch {
     pub http_worker_min: Option<usize>,
     pub http_stream_worker_factor: Option<usize>,
     pub http_stream_worker_min: Option<usize>,
+    pub warmup_cron_enabled: Option<bool>,
+    pub warmup_cron_expression: Option<String>,
+    pub warmup_message: Option<String>,
 }
 
 /// 函数 `background_tasks_settings`
@@ -76,6 +84,12 @@ pub(crate) fn background_tasks_settings() -> BackgroundTasksSettings {
         http_worker_min: HTTP_WORKER_MIN.load(Ordering::Relaxed),
         http_stream_worker_factor: HTTP_STREAM_WORKER_FACTOR.load(Ordering::Relaxed),
         http_stream_worker_min: HTTP_STREAM_WORKER_MIN.load(Ordering::Relaxed),
+        warmup_cron_enabled: WARMUP_CRON_ENABLED.load(Ordering::Relaxed),
+        warmup_cron_expression: current_mutex_string(
+            &WARMUP_CRON_EXPRESSION,
+            DEFAULT_WARMUP_CRON_EXPRESSION,
+        ),
+        warmup_message: current_mutex_string(&WARMUP_MESSAGE, DEFAULT_WARMUP_MESSAGE),
         requires_restart_keys: BACKGROUND_TASK_RESTART_REQUIRED_KEYS.to_vec(),
     }
 }
@@ -158,6 +172,20 @@ pub(crate) fn set_background_tasks_settings(
         let normalized = value.max(1);
         HTTP_STREAM_WORKER_MIN.store(normalized, Ordering::Relaxed);
         std::env::set_var(ENV_HTTP_STREAM_WORKER_MIN, normalized.to_string());
+    }
+    if let Some(enabled) = patch.warmup_cron_enabled {
+        WARMUP_CRON_ENABLED.store(enabled, Ordering::Relaxed);
+        std::env::set_var(ENV_WARMUP_CRON_ENABLED, if enabled { "1" } else { "0" });
+    }
+    if let Some(expression) = patch.warmup_cron_expression {
+        let normalized = normalize_text_setting(&expression, DEFAULT_WARMUP_CRON_EXPRESSION);
+        set_mutex_string(&WARMUP_CRON_EXPRESSION, normalized.as_str());
+        std::env::set_var(ENV_WARMUP_CRON_EXPRESSION, normalized);
+    }
+    if let Some(message) = patch.warmup_message {
+        let normalized = normalize_text_setting(&message, DEFAULT_WARMUP_MESSAGE);
+        set_mutex_string(&WARMUP_MESSAGE, normalized.as_str());
+        std::env::set_var(ENV_WARMUP_MESSAGE, normalized);
     }
 
     background_tasks_settings()
@@ -270,6 +298,42 @@ fn reload_background_tasks_from_env() {
         env_usize_or(ENV_HTTP_STREAM_WORKER_MIN, DEFAULT_HTTP_STREAM_WORKER_MIN).max(1),
         Ordering::Relaxed,
     );
+    WARMUP_CRON_ENABLED.store(
+        env_bool_or(ENV_WARMUP_CRON_ENABLED, false),
+        Ordering::Relaxed,
+    );
+    let warmup_cron_expression = std::env::var(ENV_WARMUP_CRON_EXPRESSION)
+        .ok()
+        .map(|value| normalize_text_setting(&value, DEFAULT_WARMUP_CRON_EXPRESSION))
+        .unwrap_or_else(|| DEFAULT_WARMUP_CRON_EXPRESSION.to_string());
+    set_mutex_string(&WARMUP_CRON_EXPRESSION, warmup_cron_expression.as_str());
+    let warmup_message = std::env::var(ENV_WARMUP_MESSAGE)
+        .ok()
+        .map(|value| normalize_text_setting(&value, DEFAULT_WARMUP_MESSAGE))
+        .unwrap_or_else(|| DEFAULT_WARMUP_MESSAGE.to_string());
+    set_mutex_string(&WARMUP_MESSAGE, warmup_message.as_str());
+}
+
+fn current_mutex_string(
+    slot: &'static std::sync::OnceLock<std::sync::Mutex<String>>,
+    default_value: &str,
+) -> String {
+    let guard = slot.get_or_init(|| std::sync::Mutex::new(default_value.to_string()));
+    crate::lock_utils::lock_recover(guard, "background_task_string").clone()
+}
+
+fn set_mutex_string(slot: &'static std::sync::OnceLock<std::sync::Mutex<String>>, value: &str) {
+    let guard = slot.get_or_init(|| std::sync::Mutex::new(value.to_string()));
+    *crate::lock_utils::lock_recover(guard, "background_task_string") = value.to_string();
+}
+
+fn normalize_text_setting(value: &str, default_value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        default_value.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// 函数 `env_usize_or`

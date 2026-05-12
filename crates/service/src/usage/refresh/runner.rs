@@ -1,3 +1,4 @@
+use chrono::{Datelike, Local, Timelike};
 use rand::Rng;
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -9,11 +10,12 @@ use super::{
     run_gateway_keepalive_once, COMMON_POLL_FAILURE_BACKOFF_MAX_ENV, COMMON_POLL_JITTER_ENV,
     DEFAULT_GATEWAY_KEEPALIVE_FAILURE_BACKOFF_MAX_SECS, DEFAULT_GATEWAY_KEEPALIVE_JITTER_SECS,
     DEFAULT_USAGE_POLL_FAILURE_BACKOFF_MAX_SECS, DEFAULT_USAGE_POLL_JITTER_SECS,
-    GATEWAY_KEEPALIVE_ENABLED, GATEWAY_KEEPALIVE_FAILURE_BACKOFF_MAX_ENV,
+    DEFAULT_WARMUP_MESSAGE, GATEWAY_KEEPALIVE_ENABLED, GATEWAY_KEEPALIVE_FAILURE_BACKOFF_MAX_ENV,
     GATEWAY_KEEPALIVE_INTERVAL_SECS, GATEWAY_KEEPALIVE_JITTER_ENV,
     TOKEN_REFRESH_FAILURE_BACKOFF_MAX_SECS, TOKEN_REFRESH_POLLING_ENABLED,
     TOKEN_REFRESH_POLL_INTERVAL_SECS_ATOMIC, USAGE_POLLING_ENABLED,
     USAGE_POLL_FAILURE_BACKOFF_MAX_ENV, USAGE_POLL_INTERVAL_SECS, USAGE_POLL_JITTER_ENV,
+    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_MESSAGE,
 };
 
 /// 函数 `usage_polling_loop`
@@ -113,6 +115,51 @@ pub(super) fn token_refresh_polling_loop() {
     );
 }
 
+pub(super) fn warmup_cron_loop() {
+    let mut last_invalid_expression = String::new();
+    loop {
+        if !WARMUP_CRON_ENABLED.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+
+        let expression = current_string(&WARMUP_CRON_EXPRESSION, "");
+        let delay = match next_cron_delay(expression.as_str()) {
+            Ok(delay) => delay,
+            Err(err) => {
+                if last_invalid_expression != expression {
+                    log::warn!("account warmup cron disabled by invalid expression: {err}");
+                    last_invalid_expression = expression;
+                }
+                thread::sleep(Duration::from_secs(60));
+                continue;
+            }
+        };
+        last_invalid_expression.clear();
+
+        sleep_with_recheck(delay, || {
+            WARMUP_CRON_ENABLED.load(Ordering::Relaxed)
+                && current_string(&WARMUP_CRON_EXPRESSION, "") == expression
+        });
+        if !WARMUP_CRON_ENABLED.load(Ordering::Relaxed)
+            || current_string(&WARMUP_CRON_EXPRESSION, "") != expression
+        {
+            continue;
+        }
+
+        let message = current_string(&WARMUP_MESSAGE, DEFAULT_WARMUP_MESSAGE);
+        match crate::account_warmup::warmup_accounts(Vec::new(), message.as_str()) {
+            Ok(result) => log::info!(
+                "account warmup cron finished: requested={} succeeded={} failed={}",
+                result.requested,
+                result.succeeded,
+                result.failed
+            ),
+            Err(err) => log::warn!("account warmup cron error: {err}"),
+        }
+    }
+}
+
 /// 函数 `parse_interval_with_fallback`
 ///
 /// 作者: gaohongshun
@@ -137,6 +184,243 @@ fn parse_interval_with_fallback(
     let fallback = std::env::var(fallback_env).ok();
     let raw = primary.as_deref().or(fallback.as_deref());
     parse_interval_secs(raw, default_secs, min_secs)
+}
+
+fn current_string(
+    slot: &'static std::sync::OnceLock<std::sync::Mutex<String>>,
+    default_value: &str,
+) -> String {
+    let guard = slot.get_or_init(|| std::sync::Mutex::new(default_value.to_string()));
+    crate::lock_utils::lock_recover(guard, "background_task_string").clone()
+}
+
+fn sleep_with_recheck<F>(duration: Duration, keep_waiting: F)
+where
+    F: Fn() -> bool,
+{
+    let mut remaining = duration;
+    while !remaining.is_zero() && keep_waiting() {
+        let chunk = remaining.min(Duration::from_secs(5));
+        thread::sleep(chunk);
+        remaining = remaining.saturating_sub(chunk);
+    }
+}
+
+fn next_cron_delay(expression: &str) -> Result<Duration, String> {
+    let now = Local::now();
+    let next = next_cron_after(expression, now)?;
+    let millis = next.signed_duration_since(now).num_milliseconds().max(1) as u64;
+    Ok(Duration::from_millis(millis))
+}
+
+fn next_cron_after(
+    expression: &str,
+    after: chrono::DateTime<Local>,
+) -> Result<chrono::DateTime<Local>, String> {
+    let schedule = CronSchedule::parse(expression)?;
+    let mut candidate =
+        after + chrono::Duration::seconds(if schedule.has_seconds { 1 } else { 60 });
+    candidate = candidate
+        .with_nanosecond(0)
+        .ok_or_else(|| "normalize cron timestamp failed".to_string())?;
+    if !schedule.has_seconds {
+        candidate = candidate
+            .with_second(0)
+            .ok_or_else(|| "normalize cron minute failed".to_string())?;
+    }
+
+    let max_iterations = if schedule.has_seconds {
+        31_622_400
+    } else {
+        527_040
+    };
+    for _ in 0..max_iterations {
+        if schedule.matches(candidate) {
+            return Ok(candidate);
+        }
+        candidate =
+            candidate + chrono::Duration::seconds(if schedule.has_seconds { 1 } else { 60 });
+    }
+
+    Err("cron expression has no matching time within one year".to_string())
+}
+
+#[derive(Debug, Clone)]
+struct CronSchedule {
+    seconds: Vec<u32>,
+    minutes: Vec<u32>,
+    hours: Vec<u32>,
+    days_of_month: Vec<u32>,
+    months: Vec<u32>,
+    days_of_week: Vec<u32>,
+    has_seconds: bool,
+}
+
+impl CronSchedule {
+    fn parse(expression: &str) -> Result<Self, String> {
+        let parts = expression.split_whitespace().collect::<Vec<_>>();
+        let (has_seconds, fields) = match parts.len() {
+            5 => (
+                false,
+                vec!["0", parts[0], parts[1], parts[2], parts[3], parts[4]],
+            ),
+            6 => (true, parts),
+            _ => {
+                return Err(
+                    "cron expression must contain 5 fields or 6 fields with seconds".to_string(),
+                )
+            }
+        };
+
+        Ok(Self {
+            seconds: parse_cron_field(fields[0], 0, 59, "seconds")?,
+            minutes: parse_cron_field(fields[1], 0, 59, "minutes")?,
+            hours: parse_cron_field(fields[2], 0, 23, "hours")?,
+            days_of_month: parse_cron_field(fields[3], 1, 31, "day of month")?,
+            months: parse_cron_field(fields[4], 1, 12, "month")?,
+            days_of_week: parse_day_of_week_field(fields[5])?,
+            has_seconds,
+        })
+    }
+
+    fn matches(&self, value: chrono::DateTime<Local>) -> bool {
+        self.seconds.contains(&value.second())
+            && self.minutes.contains(&value.minute())
+            && self.hours.contains(&value.hour())
+            && self.days_of_month.contains(&value.day())
+            && self.months.contains(&value.month())
+            && self
+                .days_of_week
+                .contains(&value.weekday().num_days_from_sunday())
+    }
+}
+
+fn parse_day_of_week_field(raw: &str) -> Result<Vec<u32>, String> {
+    let mut values = parse_cron_field(raw, 0, 7, "day of week")?
+        .into_iter()
+        .map(|value| if value == 7 { 0 } else { value })
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    Ok(values)
+}
+
+fn parse_cron_field(raw: &str, min: u32, max: u32, label: &str) -> Result<Vec<u32>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "?" {
+        return Err(format!("{label} field is empty"));
+    }
+
+    let mut values = Vec::new();
+    for segment in trimmed.split(',') {
+        parse_cron_segment(segment.trim(), min, max, label, &mut values)?;
+    }
+    values.sort_unstable();
+    values.dedup();
+    if values.is_empty() {
+        return Err(format!("{label} field has no values"));
+    }
+    Ok(values)
+}
+
+fn parse_cron_segment(
+    segment: &str,
+    min: u32,
+    max: u32,
+    label: &str,
+    output: &mut Vec<u32>,
+) -> Result<(), String> {
+    if segment.is_empty() {
+        return Err(format!("{label} field contains an empty segment"));
+    }
+
+    let (range_part, step) = match segment.split_once('/') {
+        Some((range, step_raw)) => {
+            let parsed_step = step_raw
+                .parse::<u32>()
+                .map_err(|_| format!("{label} step is invalid"))?;
+            if parsed_step == 0 {
+                return Err(format!("{label} step must be greater than 0"));
+            }
+            (range, parsed_step)
+        }
+        None => (segment, 1),
+    };
+
+    let (start, end) = if range_part == "*" || range_part == "?" {
+        (min, max)
+    } else if let Some((start_raw, end_raw)) = range_part.split_once('-') {
+        (
+            parse_cron_number(start_raw, min, max, label)?,
+            parse_cron_number(end_raw, min, max, label)?,
+        )
+    } else {
+        let value = parse_cron_number(range_part, min, max, label)?;
+        (value, value)
+    };
+
+    if start > end {
+        return Err(format!("{label} range start is greater than end"));
+    }
+
+    let mut value = start;
+    while value <= end {
+        output.push(value);
+        match value.checked_add(step) {
+            Some(next) => value = next,
+            None => break,
+        }
+    }
+    Ok(())
+}
+
+fn parse_cron_number(raw: &str, min: u32, max: u32, label: &str) -> Result<u32, String> {
+    let value = raw
+        .parse::<u32>()
+        .map_err(|_| format!("{label} value is invalid"))?;
+    if value < min || value > max {
+        return Err(format!("{label} value {value} is outside {min}-{max}"));
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_cron_after, CronSchedule};
+    use chrono::{Local, TimeZone, Timelike};
+
+    #[test]
+    fn next_cron_after_supports_five_field_every_four_hours() {
+        let now = Local
+            .with_ymd_and_hms(2026, 5, 12, 9, 30, 45)
+            .single()
+            .expect("local time");
+
+        let next = next_cron_after("0 */4 * * *", now).expect("next cron");
+
+        assert_eq!(next.hour(), 12);
+        assert_eq!(next.minute(), 0);
+        assert_eq!(next.second(), 0);
+    }
+
+    #[test]
+    fn next_cron_after_supports_six_field_seconds() {
+        let now = Local
+            .with_ymd_and_hms(2026, 5, 12, 9, 30, 10)
+            .single()
+            .expect("local time");
+
+        let next = next_cron_after("15 30 9 * * *", now).expect("next cron");
+
+        assert_eq!(next.hour(), 9);
+        assert_eq!(next.minute(), 30);
+        assert_eq!(next.second(), 15);
+    }
+
+    #[test]
+    fn cron_schedule_rejects_zero_step() {
+        assert!(CronSchedule::parse("*/0 * * * *").is_err());
+    }
 }
 
 /// 函数 `run_dynamic_poll_loop`

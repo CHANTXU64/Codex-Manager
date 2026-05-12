@@ -780,6 +780,8 @@ function AccountKeyInfoCell({
     aggregateApiMap,
   );
   const apiKey = apiKeyMap.get(log.keyId) || null;
+  const apiKeyName = String(apiKey?.name || "").trim();
+  const apiKeyDisplayName = apiKeyName || formatCompactKeyLabel(log.keyId);
   const aggregateApiById = apiKey?.aggregateApiId
     ? aggregateApiMap.get(apiKey.aggregateApiId) || null
     : null;
@@ -846,7 +848,9 @@ function AccountKeyInfoCell({
             </div>
             <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
               <Shield className="h-2.5 w-2.5" />
-              <span className="font-mono">{formatCompactKeyLabel(log.keyId)}</span>
+              <span className={apiKeyName ? "truncate" : "font-mono"}>
+                {apiKeyDisplayName}
+              </span>
             </div>
             {showAggregateAttemptHint ? (
               <div className="text-[9px] text-amber-500">
@@ -871,6 +875,12 @@ function AccountKeyInfoCell({
             </div>
             <div className="space-y-0.5">
               <div className="text-[10px] text-background/70">{t("密钥")}</div>
+              <div className="break-all text-[11px]">
+                {apiKeyDisplayName || "-"}
+              </div>
+            </div>
+            <div className="space-y-0.5">
+              <div className="text-[10px] text-background/70">{t("密钥 ID")}</div>
               <div className="break-all font-mono text-[11px]">
                 {log.keyId || "-"}
               </div>
@@ -907,8 +917,8 @@ function AccountKeyInfoCell({
           </div>
           <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
             <Shield className="h-2.5 w-2.5" />
-            <span className="font-mono">
-              {formatCompactKeyLabel(log.keyId)}
+            <span className={apiKeyName ? "max-w-[140px] truncate" : "font-mono"}>
+              {apiKeyDisplayName}
             </span>
           </div>
           {showAttemptHint ? (
@@ -952,6 +962,12 @@ function AccountKeyInfoCell({
           </div>
           <div className="space-y-0.5">
             <div className="text-[10px] text-background/70">{t("密钥")}</div>
+            <div className="break-all text-[11px]">
+              {apiKeyDisplayName || "-"}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            <div className="text-[10px] text-background/70">{t("密钥 ID")}</div>
             <div className="break-all font-mono text-[11px]">
               {log.keyId || "-"}
             </div>
