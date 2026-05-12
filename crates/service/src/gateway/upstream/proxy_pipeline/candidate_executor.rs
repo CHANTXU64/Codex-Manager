@@ -114,6 +114,93 @@ fn should_failover_terminal_gateway_error(
     true
 }
 
+fn should_retry_same_account_once(attempt_number: usize, last_attempt_error: Option<&str>) -> bool {
+    if attempt_number != 1 {
+        return false;
+    }
+    let Some(error) = last_attempt_error else {
+        return true;
+    };
+    let normalized = error.to_ascii_lowercase();
+    !(normalized.contains("challenge")
+        || normalized.contains("rate-limited")
+        || normalized.contains("unauthorized")
+        || normalized.contains("account exhausted")
+        || normalized.contains("not-found"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_candidate_attempt_with_same_account_retry(
+    storage: &Storage,
+    method: &reqwest::Method,
+    request_ctx: UpstreamRequestContext<'_>,
+    incoming_headers: &super::super::super::IncomingHeaderSnapshot,
+    body: &bytes::Bytes,
+    upstream_is_stream: bool,
+    path: &str,
+    request_deadline: Option<Instant>,
+    account: &Account,
+    token: &mut Token,
+    strip_session_affinity: bool,
+    debug: bool,
+    allow_openai_fallback: bool,
+    disable_challenge_stateless_retry: bool,
+    has_more_candidates: bool,
+    context: &GatewayUpstreamExecutionContext<'_>,
+    setup: &UpstreamRequestSetup,
+    trace: &mut CandidateAttemptTrace,
+    attempted_account_ids: &mut Vec<String>,
+) -> CandidateUpstreamDecision {
+    let mut decision = run_candidate_attempt(CandidateAttemptParams {
+        storage,
+        method,
+        request_ctx,
+        incoming_headers,
+        body,
+        upstream_is_stream,
+        path,
+        request_deadline,
+        account,
+        token,
+        strip_session_affinity,
+        debug,
+        allow_openai_fallback,
+        disable_challenge_stateless_retry,
+        has_more_candidates,
+        context,
+        setup,
+        trace,
+    });
+
+    if matches!(decision, CandidateUpstreamDecision::Failover)
+        && should_retry_same_account_once(1, trace.last_attempt_error.as_deref())
+    {
+        attempted_account_ids.push(account.id.clone());
+        decision = run_candidate_attempt(CandidateAttemptParams {
+            storage,
+            method,
+            request_ctx,
+            incoming_headers,
+            body,
+            upstream_is_stream,
+            path,
+            request_deadline,
+            account,
+            token,
+            strip_session_affinity,
+            debug,
+            allow_openai_fallback,
+            disable_challenge_stateless_retry,
+            has_more_candidates,
+            context,
+            setup,
+            trace,
+        });
+    }
+
+    decision
+}
+
 #[allow(clippy::too_many_arguments)]
 fn respond_terminal_attempt(
     request: Request,
@@ -284,26 +371,27 @@ pub(in super::super) fn execute_candidate_sequence(
 
         let mut inflight_guard = Some(super::super::super::acquire_account_inflight(&account.id));
         let mut attempt_trace = CandidateAttemptTrace::default();
-        let decision = run_candidate_attempt(CandidateAttemptParams {
+        let decision = run_candidate_attempt_with_same_account_retry(
             storage,
             method,
             request_ctx,
-            incoming_headers: &attempt_headers,
-            body: &body_for_attempt,
+            &attempt_headers,
+            &body_for_attempt,
             upstream_is_stream,
             path,
             request_deadline,
-            account: &account,
-            token: &mut token,
+            &account,
+            &mut token,
             strip_session_affinity,
             debug,
-            allow_openai_fallback: attempt_allow_openai_fallback,
+            attempt_allow_openai_fallback,
             disable_challenge_stateless_retry,
-            has_more_candidates: context.has_more_candidates(idx),
+            context.has_more_candidates(idx),
             context,
             setup,
-            trace: &mut attempt_trace,
-        });
+            &mut attempt_trace,
+            &mut attempted_account_ids,
+        );
 
         match decision {
             CandidateUpstreamDecision::Failover => {

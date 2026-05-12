@@ -556,3 +556,66 @@ fn gateway_turn_state_disables_prompt_cache_route_even_when_binding_exists() {
         .expect("seeded pck binding should remain untouched");
     assert_eq!(binding.account_id, "acc_prompt_cache_b");
 }
+
+#[test]
+fn gateway_retries_same_account_once_before_prompt_cache_failover() {
+    let _lock = test_env_guard();
+    let dir = new_test_dir("codexmanager-gateway-pck-same-account-retry");
+    let db_path: PathBuf = dir.join("codexmanager.db");
+    let _db_guard = EnvGuard::set("CODEXMANAGER_DB_PATH", db_path.to_string_lossy().as_ref());
+    let _route_guard = EnvGuard::set("CODEXMANAGER_ROUTE_STRATEGY", "ordered");
+
+    let upstream_error = serde_json::json!({
+        "error": { "message": "temporary upstream failure", "type": "server_error" }
+    });
+    let (upstream_addr, upstream_rx, upstream_join) = start_mock_upstream_sequence(vec![
+        (
+            502,
+            serde_json::to_string(&upstream_error).expect("serialize upstream error"),
+        ),
+        (200, ok_response("resp_retry_success")),
+    ]);
+    let upstream_base = format!("http://{upstream_addr}/backend-api/codex");
+    let _upstream_guard = EnvGuard::set("CODEXMANAGER_UPSTREAM_BASE_URL", &upstream_base);
+
+    let storage = Storage::open(&db_path).expect("open db");
+    storage.init().expect("init db");
+    let platform_key = "pk_prompt_cache_same_account_retry";
+    let key_hash =
+        seed_openai_compat_gateway(&storage, platform_key, "gk_prompt_cache_same_account_retry");
+    let prompt_cache_key = "client-thread-same-account-retry";
+    let route_id = prompt_cache_route_id(&key_hash, prompt_cache_key);
+
+    let server = codexmanager_service::start_one_shot_server().expect("start server");
+    post_responses(
+        &server.addr,
+        platform_key,
+        "/v1/responses",
+        serde_json::json!({
+            "model": MODEL,
+            "input": "retry once before switching accounts",
+            "stream": false,
+            "prompt_cache_key": prompt_cache_key
+        }),
+    );
+    server.join();
+
+    let first = upstream_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first upstream request");
+    let second = upstream_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("same-account retry request");
+    assert_eq!(auth_account(&first), "acc_prompt_cache_a");
+    assert_eq!(auth_account(&second), "acc_prompt_cache_a");
+    assert!(upstream_rx
+        .recv_timeout(Duration::from_millis(200))
+        .is_err());
+    upstream_join.join().expect("join upstream");
+
+    let binding = storage
+        .get_conversation_binding(&key_hash, &route_id)
+        .expect("load pck binding")
+        .expect("pck binding should be created after retry success");
+    assert_eq!(binding.account_id, "acc_prompt_cache_a");
+}

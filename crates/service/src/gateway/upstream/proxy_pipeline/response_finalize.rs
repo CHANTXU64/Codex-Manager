@@ -98,6 +98,13 @@ fn derive_status_for_log(
     }
 }
 
+fn should_penalize_stream_failure(
+    upstream_stream_failed: bool,
+    client_delivery_failed: bool,
+) -> bool {
+    upstream_stream_failed && !client_delivery_failed
+}
+
 /// 函数 `respond_total_timeout`
 ///
 /// 作者: gaohongshun
@@ -256,18 +263,21 @@ pub(super) fn finalize_upstream_response(
         bridge.upstream_error_hint.as_deref(),
         bridge_error_message,
     );
-    let gateway_error_follow_up = final_error
-        .as_deref()
-        .map(|error| context.apply_gateway_error_follow_up(account_id, error, has_more_candidates));
-    let gateway_failover =
-        gateway_error_follow_up.is_some_and(|follow_up| follow_up.should_failover);
-
     let upstream_stream_failed = client_is_stream
         && (!bridge.stream_terminal_seen || bridge.stream_terminal_error.is_some());
     let client_delivery_failed = bridge
         .delivery_error
         .as_deref()
         .is_some_and(is_client_disconnect_error);
+    let penalize_stream_failure =
+        should_penalize_stream_failure(upstream_stream_failed, client_delivery_failed);
+    let gateway_error_follow_up = final_error.as_deref().and_then(|error| {
+        (!upstream_stream_failed || penalize_stream_failure)
+            .then(|| context.apply_gateway_error_follow_up(account_id, error, has_more_candidates))
+    });
+    let gateway_failover =
+        gateway_error_follow_up.is_some_and(|follow_up| follow_up.should_failover);
+
     let status_for_log = derive_status_for_log(
         status_code,
         bridge.delivered_status_code,
@@ -277,7 +287,7 @@ pub(super) fn finalize_upstream_response(
         client_delivery_failed,
     );
 
-    if upstream_stream_failed {
+    if penalize_stream_failure {
         super::super::super::mark_account_cooldown(
             account_id,
             super::super::super::CooldownReason::Network,
@@ -311,7 +321,10 @@ pub(super) fn finalize_upstream_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_final_error, derive_status_for_log, is_client_disconnect_error};
+    use super::{
+        derive_final_error, derive_status_for_log, is_client_disconnect_error,
+        should_penalize_stream_failure,
+    };
 
     #[test]
     fn derive_final_error_prefers_upstream_hint_then_http_error_then_bridge_error() {
@@ -374,5 +387,12 @@ mod tests {
         assert!(is_client_disconnect_error("broken pipe"));
         assert!(is_client_disconnect_error("connection reset by peer"));
         assert!(!is_client_disconnect_error("upstream timeout"));
+    }
+
+    #[test]
+    fn client_aborted_stream_failure_is_not_penalizing() {
+        assert!(!should_penalize_stream_failure(true, true));
+        assert!(should_penalize_stream_failure(true, false));
+        assert!(!should_penalize_stream_failure(false, true));
     }
 }
