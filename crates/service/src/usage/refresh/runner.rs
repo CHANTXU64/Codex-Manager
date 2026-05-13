@@ -230,6 +230,10 @@ pub(super) fn next_warmup_cron_timestamp(expression: &str) -> Option<i64> {
         .map(|next| next.timestamp())
 }
 
+pub(crate) fn validate_warmup_cron_expression(expression: &str) -> Result<(), String> {
+    next_cron_after(expression, Local::now()).map(|_| ())
+}
+
 fn next_cron_after(
     expression: &str,
     after: chrono::DateTime<Local>,
@@ -237,8 +241,9 @@ fn next_cron_after(
     let schedules = parse_cron_schedules(expression)?;
     let mut next_match: Option<chrono::DateTime<Local>> = None;
 
-    for schedule in schedules {
-        let candidate = next_cron_after_schedule(&schedule, after)?;
+    for (index, schedule) in schedules.into_iter().enumerate() {
+        let candidate = next_cron_after_schedule(&schedule, after)
+            .map_err(|err| format!("cron schedule #{} is invalid: {err}", index + 1))?;
         next_match = match next_match {
             Some(current) if current <= candidate => Some(current),
             _ => Some(candidate),
@@ -250,12 +255,15 @@ fn next_cron_after(
 
 fn parse_cron_schedules(expression: &str) -> Result<Vec<CronSchedule>, String> {
     let mut schedules = Vec::new();
-    for item in expression.split('|') {
+    for (index, item) in expression.split('|').enumerate() {
         let trimmed = item.trim();
         if trimmed.is_empty() {
             continue;
         }
-        schedules.push(CronSchedule::parse(trimmed)?);
+        schedules.push(
+            CronSchedule::parse(trimmed)
+                .map_err(|err| format!("cron schedule #{} is invalid: {err}", index + 1))?,
+        );
     }
     if schedules.is_empty() {
         return Err("cron expression has no schedule".to_string());
@@ -435,7 +443,7 @@ fn parse_cron_number(raw: &str, min: u32, max: u32, label: &str) -> Result<u32, 
 
 #[cfg(test)]
 mod tests {
-    use super::{next_cron_after, CronSchedule};
+    use super::{next_cron_after, validate_warmup_cron_expression, CronSchedule};
     use chrono::{Datelike, Local, TimeZone, Timelike};
 
     #[test]
@@ -494,6 +502,40 @@ mod tests {
         assert_eq!(next.hour(), 12);
         assert_eq!(next.minute(), 10);
         assert_eq!(next.second(), 0);
+    }
+
+    #[test]
+    fn next_cron_after_rejects_any_invalid_pipe_schedule() {
+        let now = Local
+            .with_ymd_and_hms(2026, 5, 12, 9, 30, 0)
+            .single()
+            .expect("local time");
+
+        let err = next_cron_after("0 7 * * *|60 12 * * *", now).expect_err("invalid cron");
+
+        assert!(
+            err.contains("schedule #2"),
+            "error should identify item: {err}"
+        );
+        assert!(
+            err.contains("minutes"),
+            "error should identify field: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_warmup_cron_expression_rejects_unreachable_schedule_item() {
+        let err =
+            validate_warmup_cron_expression("0 7 * * *|0 0 31 2 *").expect_err("invalid cron");
+
+        assert!(
+            err.contains("schedule #2"),
+            "error should identify item: {err}"
+        );
+        assert!(
+            err.contains("no matching time"),
+            "error should explain schedule cannot run: {err}"
+        );
     }
 
     #[test]

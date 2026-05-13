@@ -96,6 +96,7 @@ import {
   type CheckUpdateRequest,
   compareEnvOverrideItems,
   formatFreeAccountModelLabel,
+  formatWarmupCronRemainingLabel,
   inferServiceBindPreview,
   matchesRecommendedWorkerSettings,
   normalizeEnvRiskLevel,
@@ -103,6 +104,7 @@ import {
   parseIntegerInput,
   readInitialSettingsTab,
   stringifyNumber,
+  validateWarmupCronExpressionFields,
   type SettingsTab,
   type WorkerPreset,
 } from "@/app/settings/settings-page-helpers";
@@ -918,18 +920,9 @@ export default function SettingsPage() {
       String(snapshot.backgroundTasks[key] || fallback);
     const nextValue = sourceValue.trim() || fallback;
     if (key === "warmupCronExpression") {
-      const schedules = nextValue
-        .split("|")
-        .map((item) => item.trim())
-        .filter(Boolean);
-      const allSchedulesValid =
-        schedules.length > 0 &&
-        schedules.every((item) => {
-          const partCount = item.split(/\s+/).filter(Boolean).length;
-          return partCount === 5 || partCount === 6;
-        });
-      if (!allSchedulesValid) {
-        toast.error(t("Cron 表达式需要 5 段，或带秒的 6 段"));
+      const validation = validateWarmupCronExpressionFields(nextValue);
+      if (!validation.valid) {
+        toast.error(t(validation.message));
         return;
       }
     }
@@ -1825,12 +1818,19 @@ export default function SettingsPage() {
                       )}
                       {" / "}
                       {t("剩余")}:{" "}
-                      {formatRemainingDurationFromSeconds(
-                        snapshot.backgroundTasks.warmupCronNextRunAt > nowSeconds
-                          ? snapshot.backgroundTasks.warmupCronNextRunAt
-                          : nowSeconds,
-                        "days",
-                        t("未知"),
+                      {formatWarmupCronRemainingLabel(
+                        snapshot.backgroundTasks.warmupCronNextRunAt,
+                        nowSeconds,
+                        (targetSeconds) =>
+                          formatRemainingDurationFromSeconds(
+                            targetSeconds,
+                            "days",
+                            t("未知"),
+                          ),
+                        {
+                          pending: t("等待调度器计算下次预热时间"),
+                          due: t("即将执行"),
+                        },
                       )}
                     </span>
                   ) : (

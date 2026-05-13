@@ -568,6 +568,11 @@ pub fn current_gateway_sse_keepalive_interval_ms() -> u64 {
 pub fn set_gateway_background_tasks(
     input: BackgroundTasksInput,
 ) -> Result<serde_json::Value, String> {
+    if let Some(expression) = input.warmup_cron_expression.as_deref() {
+        let normalized =
+            normalize_optional_text(Some(expression)).unwrap_or_else(|| "0 */4 * * *".to_string());
+        usage_refresh::validate_warmup_cron_expression(normalized.as_str())?;
+    }
     let applied = usage_refresh::set_background_tasks_settings(input.into_patch());
     let raw = serde_json::to_string(&applied)
         .map_err(|err| format!("serialize background tasks failed: {err}"))?;

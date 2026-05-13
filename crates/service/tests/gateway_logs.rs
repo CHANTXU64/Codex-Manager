@@ -4,6 +4,8 @@ mod anthropic;
 mod basic;
 #[path = "gateway_logs/images.rs"]
 mod images;
+#[path = "gateway_logs/local_props.rs"]
+mod local_props;
 #[path = "gateway_logs/retry_logging.rs"]
 mod retry_logging;
 #[path = "gateway_logs/support.rs"]

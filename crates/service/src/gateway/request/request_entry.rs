@@ -11,7 +11,7 @@ use tiny_http::{Request, Response};
 ///
 /// # 返回
 /// 返回函数执行结果
-pub(crate) fn handle_gateway_request(mut request: Request) -> Result<(), String> {
+pub(crate) fn handle_gateway_request(request: Request) -> Result<(), String> {
     // 处理代理请求（鉴权后转发到上游）
     let debug = super::DEFAULT_GATEWAY_DEBUG;
     if request.method().as_str() == "OPTIONS" {
@@ -30,6 +30,16 @@ pub(crate) fn handle_gateway_request(mut request: Request) -> Result<(), String>
     let trace_id = super::trace_log::next_trace_id();
     let request_path_for_log = super::normalize_models_path(request.url());
     let request_method_for_log = request.method().as_str().to_string();
+    let mut request = match super::maybe_respond_local_props_pre_auth(
+        request,
+        trace_id.as_str(),
+        request_path_for_log.as_str(),
+        request_path_for_log.as_str(),
+        request_method_for_log.as_str(),
+    )? {
+        Some(request) => request,
+        None => return Ok(()),
+    };
     let validated =
         match super::local_validation::prepare_local_request(&mut request, trace_id.clone(), debug)
         {

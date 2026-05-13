@@ -6,8 +6,9 @@ pub(super) use shared::{test_env_guard, EnvGuard};
 pub(super) use codexmanager_core::rpc::types::ModelInfo;
 pub(super) use codexmanager_core::rpc::types::ModelsResponse;
 pub(super) use codexmanager_core::storage::{
-    now_ts, Account, ApiKey, ModelCatalogModelRecord, ModelCatalogReasoningLevelRecord,
-    ModelCatalogScopeRecord, ModelCatalogStringItemRecord, Storage, Token,
+    now_ts, Account, ApiKey, ApiKeyActiveAccount, ModelCatalogModelRecord,
+    ModelCatalogReasoningLevelRecord, ModelCatalogScopeRecord, ModelCatalogStringItemRecord,
+    Storage, Token,
 };
 pub(super) use sha2::{Digest, Sha256};
 pub(super) use std::collections::HashMap;
@@ -167,6 +168,51 @@ pub(super) fn post_http_raw(
             let body_raw = buf.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
             let body = decode_chunked_body_if_needed(&body_raw);
             return (status, body);
+        }
+        last_raw = buf;
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!("status parse failed, raw response: {last_raw:?}");
+}
+
+pub(super) fn get_http_raw(
+    addr: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (u16, HashMap<String, String>, String) {
+    let mut last_raw = String::new();
+    for _ in 0..20 {
+        let mut stream = TcpStream::connect(addr).expect("connect server");
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n");
+        for (name, value) in headers {
+            request.push_str(name);
+            request.push_str(": ");
+            request.push_str(value);
+            request.push_str("\r\n");
+        }
+        request.push_str("\r\n");
+        stream.write_all(request.as_bytes()).expect("write");
+
+        let mut buf = String::new();
+        stream.read_to_string(&mut buf).expect("read");
+        if let Some(status) = buf
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u16>().ok())
+        {
+            let mut response_headers = HashMap::new();
+            let header_text = buf.split("\r\n\r\n").next().unwrap_or("");
+            for line in header_text.lines().skip(1) {
+                if let Some((name, value)) = line.split_once(':') {
+                    response_headers
+                        .insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+                }
+            }
+            let body_raw = buf.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+            let body = decode_chunked_body_if_needed(&body_raw);
+            return (status, response_headers, body);
         }
         last_raw = buf;
         thread::sleep(Duration::from_millis(50));

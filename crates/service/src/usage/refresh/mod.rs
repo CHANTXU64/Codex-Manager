@@ -32,6 +32,8 @@ mod queue;
 mod runner;
 mod settings;
 
+pub(crate) use runner::validate_warmup_cron_expression;
+
 static USAGE_POLLING_STARTED: OnceLock<()> = OnceLock::new();
 static GATEWAY_KEEPALIVE_STARTED: OnceLock<()> = OnceLock::new();
 static TOKEN_REFRESH_POLLING_STARTED: OnceLock<()> = OnceLock::new();

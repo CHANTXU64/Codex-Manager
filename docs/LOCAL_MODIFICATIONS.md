@@ -4,7 +4,7 @@
 
 ## Local props probe handling
 
-- 提交：`待提交`
+- 提交：`3d05626 Intercept local props probes`
 - 标题：`Intercept local props probes`
 
 ### 摘要
@@ -14,14 +14,21 @@
 核心行为：
 
 - 对 `GET /v1/props` 和 `GET /props` 直接返回本地 JSON `{}`。
-- 拦截发生在账号候选选择和上游代理之前，因此不会访问 ChatGPT 上游，不会触发 Cloudflare challenge，也不会影响 active account。
+- 拦截发生在本地平台 Key 鉴权、账号候选选择和上游代理之前，因此无 Authorization 的兼容客户端探测也会返回 `{}`，不会访问 ChatGPT 上游，不会触发 Cloudflare challenge，也不会影响 active account。
 - 只匹配精确 props 路径及其 query string，不匹配 `/v1/props-extra`、`/v1/props/extra` 等其它路径。
 
-合并上游时重点保护：`request/local_props.rs` 的本地短路处理，以及 `request_entry.rs` 中该处理必须位于 `proxy_validated_request` 之前。
+本次加固：
+
+- 补充真实 gateway pipeline 回归测试，覆盖 `/v1/props`、`/props`、`/v1/props?xxx=yyy` 的本地响应行为，确认返回 `{}`、`application/json`、不访问上游、不触发账号选择、不改写 active account，并写入 request log。
+- 明确无 Authorization 的 `/v1/props` 兼容客户端探测也必须在本地鉴权前返回 `{}`。
+
+合并上游时重点保护：`request/local_props.rs` 的本地短路处理，以及 `request_entry.rs` 中该处理必须位于 `prepare_local_request` 和 `proxy_validated_request` 之前。
 
 ## Web log key names and scheduled warmup
 
-- 提交：`待提交`
+- 提交：
+  - `a516f43 Add scheduled account warmup and log key names`
+  - `85bbbaf Support multiple warmup cron schedules`
 - 标题：`Support multiple scheduled account warmup cron schedules and log key names`
 
 ### 摘要
@@ -35,10 +42,16 @@
 - 定时预热支持用 `|` 分隔多个 Cron 表达式，例如 `0 7 * * *|10 12 * * *|20 17 * * *`，调度器会取最近一次触发时间。
 - 设置页会展示下一次预热时间与剩余倒计时，便于确认调度器是否已经进入等待状态。
 - 定时预热复用现有账号预热逻辑，会对当前所有可用网关账号发送轻量预热请求。
-- Cron 支持 5 段格式，也支持带秒的 6 段格式；表达式非法时只记录 warning，不让服务崩溃。
+- Cron 支持 5 段格式，也支持带秒的 6 段格式；表达式保存采用严格校验，任一 `|` 分段非法或无法计算下一次触发时间都会拒绝保存，并提示具体第几项有问题。
 - Docker Compose 的开发版、release 版和 all-in-one 部署均默认注入 `TZ=Asia/Shanghai`。
 - 预热模型选择优先使用 catalog 中第一个可 API 使用且 slug 包含 `mini` 的模型，例如 `gpt-5.4-mini`；没有 mini 时再回退到第一个可 API 使用模型。
 - catalog 缺失时的默认预热模型为 `gpt-5.4-mini`，尽量降低预热成本。
+
+本次加固：
+
+- 前端设置页剩余时间逻辑区分未来、已到期和缺失 `warmupCronNextRunAt`，避免过期时间被强行显示成 `0s`。
+- 补充 helper 测试覆盖多 Cron 表达式的前端格式校验，以及剩余时间的未来、过期、缺失三种显示分支。
+- 补充 Rust 回归测试覆盖任一 `|` 分段非法时整体拒绝、无法计算下一次触发时间时拒绝，以及 settings snapshot 中 `warmupCronNextRunAt` 的 camelCase 序列化。
 
 合并上游时重点保护：`account_warmup.rs` 的 mini 模型优先策略、`usage/refresh/runner.rs` 的 warmup cron 调度和 `|` 多表达式解析、`BackgroundTaskSettings` 新增字段的前后端序列化、Docker Compose 的 `TZ=Asia/Shanghai`、以及日志页密钥名称优先显示逻辑。
 

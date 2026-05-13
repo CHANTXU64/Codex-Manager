@@ -35,6 +35,9 @@ const ISOLATED_RUNTIME_ENV_KEYS: &[&str] = &[
     "CODEXMANAGER_HTTP_WORKER_MIN",
     "CODEXMANAGER_HTTP_STREAM_WORKER_FACTOR",
     "CODEXMANAGER_HTTP_STREAM_WORKER_MIN",
+    "CODEXMANAGER_WARMUP_CRON_ENABLED",
+    "CODEXMANAGER_WARMUP_CRON_EXPRESSION",
+    "CODEXMANAGER_WARMUP_MESSAGE",
 ];
 
 /// 函数 `unique_temp_db_path`
@@ -96,7 +99,10 @@ fn reset_runtime_defaults() {
             "httpWorkerFactor": 4,
             "httpWorkerMin": 8,
             "httpStreamWorkerFactor": 1,
-            "httpStreamWorkerMin": 2
+            "httpStreamWorkerMin": 2,
+            "warmupCronEnabled": false,
+            "warmupCronExpression": "0 */4 * * *",
+            "warmupMessage": "hi"
         }
     })));
 }
@@ -588,6 +594,49 @@ fn app_settings_set_persists_snapshot_and_password_hash() {
         assert!(stored_password
             .as_deref()
             .is_some_and(|value| value.starts_with("sha256$")));
+    });
+}
+
+#[test]
+fn app_settings_snapshot_serializes_warmup_cron_next_run_at() {
+    with_temp_db(|_db_path| {
+        let before = now_ts();
+        let snapshot = codexmanager_service::app_settings_set(Some(&json!({
+            "backgroundTasks": {
+                "warmupCronEnabled": true,
+                "warmupCronExpression": "*/1 * * * *|0 7 * * *",
+                "warmupMessage": "hi"
+            }
+        })))
+        .expect("enable warmup cron");
+
+        let background_tasks = snapshot
+            .get("backgroundTasks")
+            .expect("background tasks snapshot");
+        assert_eq!(
+            background_tasks
+                .get("warmupCronEnabled")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            background_tasks
+                .get("warmupCronExpression")
+                .and_then(|value| value.as_str()),
+            Some("*/1 * * * *|0 7 * * *")
+        );
+        let next_run_at = background_tasks
+            .get("warmupCronNextRunAt")
+            .and_then(|value| value.as_i64())
+            .expect("warmup cron next run timestamp is serialized");
+        assert!(
+            next_run_at > before,
+            "next run timestamp should be in the future: before={before} next={next_run_at}"
+        );
+        assert!(
+            next_run_at <= before + 120,
+            "*/1 cron should serialize a near-future next run: before={before} next={next_run_at}"
+        );
     });
 }
 

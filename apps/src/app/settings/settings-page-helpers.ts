@@ -276,6 +276,49 @@ export function parseIntegerInput(value: string, minimum = 0): number | null {
   return rounded;
 }
 
+export function validateWarmupCronExpressionFields(
+  value: string,
+): { valid: true } | { valid: false; message: string } {
+  const schedules = value
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (schedules.length === 0) {
+    return { valid: false, message: "Cron 表达式至少需要一项有效计划" };
+  }
+  for (const [index, schedule] of schedules.entries()) {
+    const partCount = schedule.split(/\s+/).filter(Boolean).length;
+    if (partCount !== 5 && partCount !== 6) {
+      return {
+        valid: false,
+        message: `Cron 表达式第 ${index + 1} 项需要 5 段，或带秒的 6 段`,
+      };
+    }
+  }
+  return { valid: true };
+}
+
+export function formatWarmupCronRemainingLabel(
+  nextRunAt: number | null | undefined,
+  nowSeconds: number,
+  formatRemaining: (targetSeconds: number) => string,
+  labels: {
+    pending: string;
+    due: string;
+  } = {
+    pending: "等待调度器计算下次预热时间",
+    due: "即将执行",
+  },
+): string {
+  if (nextRunAt == null || !Number.isFinite(nextRunAt)) {
+    return labels.pending;
+  }
+  if (nextRunAt <= nowSeconds) {
+    return labels.due;
+  }
+  return formatRemaining(nextRunAt);
+}
+
 export function inferServiceBindPreview(addr: string, mode: string): string {
   const normalizedAddr = String(addr || "").trim() || "localhost:48760";
   const [, port = "48760"] = normalizedAddr.split(":");

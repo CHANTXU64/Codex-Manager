@@ -60,3 +60,37 @@ test("compareEnvOverrideItems 将高风险请求语义项排在普通项之后",
     "CODEXMANAGER_STRICT_REQUEST_PARAM_ALLOWLIST",
   ]);
 });
+
+test("validateWarmupCronExpressionFields 标出多 Cron 中格式错误的项", () => {
+  assert.deepEqual(helpers.validateWarmupCronExpressionFields("0 7 * * *"), {
+    valid: true,
+  });
+  assert.deepEqual(
+    helpers.validateWarmupCronExpressionFields("0 7 * * *|0 12 * *"),
+    {
+      valid: false,
+      message: "Cron 表达式第 2 项需要 5 段，或带秒的 6 段",
+    }
+  );
+});
+
+test("formatWarmupCronRemainingLabel 区分未来、过期和缺失 nextRunAt", () => {
+  assert.equal(
+    helpers.formatWarmupCronRemainingLabel(120, 100, (target) => `remaining:${target}`),
+    "remaining:120"
+  );
+  assert.equal(
+    helpers.formatWarmupCronRemainingLabel(90, 100, () => "unused", {
+      pending: "pending",
+      due: "due",
+    }),
+    "due"
+  );
+  assert.equal(
+    helpers.formatWarmupCronRemainingLabel(null, 100, () => "unused", {
+      pending: "pending",
+      due: "due",
+    }),
+    "pending"
+  );
+});
