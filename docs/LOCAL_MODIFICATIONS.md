@@ -2,6 +2,23 @@
 
 本文件只记录本地 fork / 我们自己维护的修改，避免把本地定制混入官方功能说明文档。
 
+## Local props probe handling
+
+- 提交：`待提交`
+- 标题：`Intercept local props probes`
+
+### 摘要
+
+这项本地修改在网关入口拦截兼容客户端的属性探测请求，避免把非 Codex/OpenAI 推理请求转发到 `chatgpt.com/backend-api/codex`。
+
+核心行为：
+
+- 对 `GET /v1/props` 和 `GET /props` 直接返回本地 JSON `{}`。
+- 拦截发生在账号候选选择和上游代理之前，因此不会访问 ChatGPT 上游，不会触发 Cloudflare challenge，也不会影响 active account。
+- 只匹配精确 props 路径及其 query string，不匹配 `/v1/props-extra`、`/v1/props/extra` 等其它路径。
+
+合并上游时重点保护：`request/local_props.rs` 的本地短路处理，以及 `request_entry.rs` 中该处理必须位于 `proxy_validated_request` 之前。
+
 ## Web log key names and scheduled warmup
 
 - 提交：`待提交`

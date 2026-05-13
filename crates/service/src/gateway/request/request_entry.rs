@@ -120,6 +120,23 @@ pub(crate) fn handle_gateway_request(mut request: Request) -> Result<(), String>
         }
     };
 
+    let request = match super::maybe_respond_local_props(
+        request,
+        validated.trace_id.as_str(),
+        validated.key_id.as_str(),
+        validated.protocol_type.as_str(),
+        validated.original_path.as_str(),
+        validated.path.as_str(),
+        validated.response_adapter,
+        validated.request_method.as_str(),
+        validated.model_for_log.as_deref(),
+        validated.reasoning_for_log.as_deref(),
+        &validated.storage,
+    )? {
+        Some(request) => request,
+        None => return Ok(()),
+    };
+
     let trace_id_for_count_tokens = validated.trace_id.clone();
     let key_id_for_count_tokens = validated.key_id.clone();
     let protocol_type_for_count_tokens = validated.protocol_type.clone();

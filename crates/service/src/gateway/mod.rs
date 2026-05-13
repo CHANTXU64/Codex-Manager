@@ -83,6 +83,8 @@ mod incoming_headers;
 mod local_count_tokens;
 #[path = "request/local_models.rs"]
 mod local_models;
+#[path = "request/local_props.rs"]
+mod local_props;
 #[path = "request/local_response.rs"]
 mod local_response;
 mod local_validation;
@@ -381,6 +383,7 @@ fn decode_base64_header_value(input: &[u8]) -> Option<Vec<u8>> {
 pub(super) use incoming_headers::IncomingHeaderSnapshot;
 use local_count_tokens::maybe_respond_local_count_tokens;
 use local_models::maybe_respond_local_models;
+use local_props::maybe_respond_local_props;
 pub(crate) use model_picker::fetch_models_for_picker;
 use openai_fallback::try_openai_fallback;
 pub(crate) use request_entry::handle_gateway_request;
