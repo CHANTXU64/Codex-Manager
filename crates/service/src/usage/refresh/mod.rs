@@ -3,7 +3,7 @@ use codexmanager_core::storage::{now_ts, Account, Storage, Token};
 use codexmanager_core::usage::parse_usage_snapshot;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender, TrySendError};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -52,6 +52,7 @@ static HTTP_WORKER_MIN: AtomicUsize = AtomicUsize::new(DEFAULT_HTTP_WORKER_MIN);
 static HTTP_STREAM_WORKER_FACTOR: AtomicUsize = AtomicUsize::new(DEFAULT_HTTP_STREAM_WORKER_FACTOR);
 static HTTP_STREAM_WORKER_MIN: AtomicUsize = AtomicUsize::new(DEFAULT_HTTP_STREAM_WORKER_MIN);
 static WARMUP_CRON_ENABLED: AtomicBool = AtomicBool::new(false);
+static WARMUP_CRON_NEXT_RUN_AT: AtomicI64 = AtomicI64::new(0);
 static WARMUP_CRON_EXPRESSION: OnceLock<Mutex<String>> = OnceLock::new();
 static WARMUP_MESSAGE: OnceLock<Mutex<String>> = OnceLock::new();
 

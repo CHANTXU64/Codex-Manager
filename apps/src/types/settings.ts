@@ -26,6 +26,7 @@ export interface BackgroundTaskSettings {
   warmupCronEnabled: boolean;
   warmupCronExpression: string;
   warmupMessage: string;
+  warmupCronNextRunAt: number | null;
 }
 
 export interface AppSettings {

@@ -69,6 +69,10 @@ import {
   Variable,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  formatRemainingDurationFromSeconds,
+  formatTsFromSeconds,
+} from "@/lib/utils/usage";
 import { ConfirmDialog } from "@/components/modals/confirm-dialog";
 import { useI18n } from "@/lib/i18n/provider";
 import {
@@ -160,6 +164,9 @@ export default function SettingsPage() {
   const [backgroundTaskDraft, setBackgroundTaskDraft] = useState<
     Record<string, string>
   >({});
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000),
+  );
   const [workerAdvancedDialogOpen, setWorkerAdvancedDialogOpen] =
     useState(false);
   const { data: workerRecommendation } = useQuery({
@@ -227,6 +234,13 @@ export default function SettingsPage() {
     "/settings/",
     !canAccessManagementRpc || Boolean(snapshot) || isSnapshotError,
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const updateSettings = useMutation({
     mutationFn: (patch: Partial<AppSettings> & { _silent?: boolean }) => {
@@ -904,8 +918,17 @@ export default function SettingsPage() {
       String(snapshot.backgroundTasks[key] || fallback);
     const nextValue = sourceValue.trim() || fallback;
     if (key === "warmupCronExpression") {
-      const partCount = nextValue.split(/\s+/).filter(Boolean).length;
-      if (partCount !== 5 && partCount !== 6) {
+      const schedules = nextValue
+        .split("|")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const allSchedulesValid =
+        schedules.length > 0 &&
+        schedules.every((item) => {
+          const partCount = item.split(/\s+/).filter(Boolean).length;
+          return partCount === 5 || partCount === 6;
+        });
+      if (!allSchedulesValid) {
         toast.error(t("Cron 表达式需要 5 段，或带秒的 6 段"));
         return;
       }
@@ -1770,7 +1793,7 @@ export default function SettingsPage() {
                         "0 */4 * * *",
                       )
                     }
-                    placeholder="0 */4 * * *"
+                    placeholder="0 7 * * *|10 12 * * *|20 17 * * *"
                   />
                 </div>
                 <div className="grid gap-1.5">
@@ -1790,6 +1813,33 @@ export default function SettingsPage() {
                     onBlur={() => saveBackgroundTaskTextField("warmupMessage", "hi")}
                     placeholder="hi"
                   />
+                </div>
+                <div className="text-xs text-muted-foreground lg:col-span-3">
+                  {snapshot.backgroundTasks.warmupCronEnabled &&
+                  snapshot.backgroundTasks.warmupCronNextRunAt ? (
+                    <span>
+                      {t("下次预热")}:{" "}
+                      {formatTsFromSeconds(
+                        snapshot.backgroundTasks.warmupCronNextRunAt,
+                        t("未知时间"),
+                      )}
+                      {" / "}
+                      {t("剩余")}:{" "}
+                      {formatRemainingDurationFromSeconds(
+                        snapshot.backgroundTasks.warmupCronNextRunAt > nowSeconds
+                          ? snapshot.backgroundTasks.warmupCronNextRunAt
+                          : nowSeconds,
+                        "days",
+                        t("未知"),
+                      )}
+                    </span>
+                  ) : (
+                    <span>
+                      {snapshot.backgroundTasks.warmupCronEnabled
+                        ? t("等待调度器计算下次预热时间")
+                        : t("定时账号预热未启用")}
+                    </span>
+                  )}
                 </div>
               </div>
             </CardContent>

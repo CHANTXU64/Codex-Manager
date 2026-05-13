@@ -15,7 +15,7 @@ use super::{
     TOKEN_REFRESH_FAILURE_BACKOFF_MAX_SECS, TOKEN_REFRESH_POLLING_ENABLED,
     TOKEN_REFRESH_POLL_INTERVAL_SECS_ATOMIC, USAGE_POLLING_ENABLED,
     USAGE_POLL_FAILURE_BACKOFF_MAX_ENV, USAGE_POLL_INTERVAL_SECS, USAGE_POLL_JITTER_ENV,
-    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_MESSAGE,
+    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_CRON_NEXT_RUN_AT, WARMUP_MESSAGE,
 };
 
 /// 函数 `usage_polling_loop`
@@ -119,14 +119,16 @@ pub(super) fn warmup_cron_loop() {
     let mut last_invalid_expression = String::new();
     loop {
         if !WARMUP_CRON_ENABLED.load(Ordering::Relaxed) {
+            WARMUP_CRON_NEXT_RUN_AT.store(0, Ordering::Relaxed);
             thread::sleep(Duration::from_secs(1));
             continue;
         }
 
         let expression = current_string(&WARMUP_CRON_EXPRESSION, "");
-        let delay = match next_cron_delay(expression.as_str()) {
-            Ok(delay) => delay,
+        let next_run_at = match next_cron_after(expression.as_str(), Local::now()) {
+            Ok(next_run_at) => next_run_at,
             Err(err) => {
+                WARMUP_CRON_NEXT_RUN_AT.store(0, Ordering::Relaxed);
                 if last_invalid_expression != expression {
                     log::warn!("account warmup cron disabled by invalid expression: {err}");
                     last_invalid_expression = expression;
@@ -136,7 +138,14 @@ pub(super) fn warmup_cron_loop() {
             }
         };
         last_invalid_expression.clear();
+        WARMUP_CRON_NEXT_RUN_AT.store(next_run_at.timestamp(), Ordering::Relaxed);
+        log::info!(
+            "account warmup cron scheduled: expression=\"{}\" next_run_at={}",
+            expression,
+            next_run_at.to_rfc3339()
+        );
 
+        let delay = delay_until(next_run_at);
         sleep_with_recheck(delay, || {
             WARMUP_CRON_ENABLED.load(Ordering::Relaxed)
                 && current_string(&WARMUP_CRON_EXPRESSION, "") == expression
@@ -147,6 +156,7 @@ pub(super) fn warmup_cron_loop() {
             continue;
         }
 
+        WARMUP_CRON_NEXT_RUN_AT.store(0, Ordering::Relaxed);
         let message = current_string(&WARMUP_MESSAGE, DEFAULT_WARMUP_MESSAGE);
         match crate::account_warmup::warmup_accounts(Vec::new(), message.as_str()) {
             Ok(result) => log::info!(
@@ -206,18 +216,57 @@ where
     }
 }
 
-fn next_cron_delay(expression: &str) -> Result<Duration, String> {
-    let now = Local::now();
-    let next = next_cron_after(expression, now)?;
-    let millis = next.signed_duration_since(now).num_milliseconds().max(1) as u64;
-    Ok(Duration::from_millis(millis))
+fn delay_until(next: chrono::DateTime<Local>) -> Duration {
+    let millis = next
+        .signed_duration_since(Local::now())
+        .num_milliseconds()
+        .max(1) as u64;
+    Duration::from_millis(millis)
+}
+
+pub(super) fn next_warmup_cron_timestamp(expression: &str) -> Option<i64> {
+    next_cron_after(expression, Local::now())
+        .ok()
+        .map(|next| next.timestamp())
 }
 
 fn next_cron_after(
     expression: &str,
     after: chrono::DateTime<Local>,
 ) -> Result<chrono::DateTime<Local>, String> {
-    let schedule = CronSchedule::parse(expression)?;
+    let schedules = parse_cron_schedules(expression)?;
+    let mut next_match: Option<chrono::DateTime<Local>> = None;
+
+    for schedule in schedules {
+        let candidate = next_cron_after_schedule(&schedule, after)?;
+        next_match = match next_match {
+            Some(current) if current <= candidate => Some(current),
+            _ => Some(candidate),
+        };
+    }
+
+    next_match.ok_or_else(|| "cron expression has no schedule".to_string())
+}
+
+fn parse_cron_schedules(expression: &str) -> Result<Vec<CronSchedule>, String> {
+    let mut schedules = Vec::new();
+    for item in expression.split('|') {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        schedules.push(CronSchedule::parse(trimmed)?);
+    }
+    if schedules.is_empty() {
+        return Err("cron expression has no schedule".to_string());
+    }
+    Ok(schedules)
+}
+
+fn next_cron_after_schedule(
+    schedule: &CronSchedule,
+    after: chrono::DateTime<Local>,
+) -> Result<chrono::DateTime<Local>, String> {
     let mut candidate =
         after + chrono::Duration::seconds(if schedule.has_seconds { 1 } else { 60 });
     candidate = candidate
@@ -387,7 +436,7 @@ fn parse_cron_number(raw: &str, min: u32, max: u32, label: &str) -> Result<u32, 
 #[cfg(test)]
 mod tests {
     use super::{next_cron_after, CronSchedule};
-    use chrono::{Local, TimeZone, Timelike};
+    use chrono::{Datelike, Local, TimeZone, Timelike};
 
     #[test]
     fn next_cron_after_supports_five_field_every_four_hours() {
@@ -415,6 +464,36 @@ mod tests {
         assert_eq!(next.hour(), 9);
         assert_eq!(next.minute(), 30);
         assert_eq!(next.second(), 15);
+    }
+
+    #[test]
+    fn next_cron_after_supports_five_field_daily_at_seven() {
+        let now = Local
+            .with_ymd_and_hms(2026, 5, 12, 6, 30, 0)
+            .single()
+            .expect("local time");
+
+        let next = next_cron_after("0 7 * * *", now).expect("next cron");
+
+        assert_eq!(next.day(), 12);
+        assert_eq!(next.hour(), 7);
+        assert_eq!(next.minute(), 0);
+        assert_eq!(next.second(), 0);
+    }
+
+    #[test]
+    fn next_cron_after_supports_pipe_separated_schedules() {
+        let now = Local
+            .with_ymd_and_hms(2026, 5, 12, 9, 30, 0)
+            .single()
+            .expect("local time");
+
+        let next = next_cron_after("0 7 * * *|10 12 * * *|20 17 * * *", now).expect("next cron");
+
+        assert_eq!(next.day(), 12);
+        assert_eq!(next.hour(), 12);
+        assert_eq!(next.minute(), 10);
+        assert_eq!(next.second(), 0);
     }
 
     #[test]

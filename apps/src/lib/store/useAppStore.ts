@@ -106,6 +106,7 @@ export const useAppStore = create<AppState>((set) => ({
       warmupCronEnabled: false,
       warmupCronExpression: "0 */4 * * *",
       warmupMessage: "hi",
+      warmupCronNextRunAt: null,
     },
     envOverrides: {},
     envOverrideCatalog: [],

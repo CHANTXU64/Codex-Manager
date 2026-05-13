@@ -17,8 +17,10 @@ use super::{
     MIN_TOKEN_REFRESH_POLL_INTERVAL_SECS, MIN_USAGE_POLL_INTERVAL_SECS,
     TOKEN_REFRESH_POLLING_ENABLED, TOKEN_REFRESH_POLL_INTERVAL_SECS_ATOMIC, USAGE_POLLING_ENABLED,
     USAGE_POLL_INTERVAL_SECS, USAGE_REFRESH_WORKERS, USAGE_REFRESH_WORKERS_ENV,
-    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_MESSAGE,
+    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_CRON_NEXT_RUN_AT, WARMUP_MESSAGE,
 };
+
+use super::runner::next_warmup_cron_timestamp;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +39,7 @@ pub(crate) struct BackgroundTasksSettings {
     warmup_cron_enabled: bool,
     warmup_cron_expression: String,
     warmup_message: String,
+    warmup_cron_next_run_at: Option<i64>,
     requires_restart_keys: Vec<&'static str>,
 }
 
@@ -71,6 +74,15 @@ pub(crate) struct BackgroundTasksSettingsPatch {
 /// 返回函数执行结果
 pub(crate) fn background_tasks_settings() -> BackgroundTasksSettings {
     ensure_background_tasks_config_loaded();
+    let warmup_cron_enabled = WARMUP_CRON_ENABLED.load(Ordering::Relaxed);
+    let warmup_cron_expression =
+        current_mutex_string(&WARMUP_CRON_EXPRESSION, DEFAULT_WARMUP_CRON_EXPRESSION);
+    let warmup_cron_next_run_at = if warmup_cron_enabled {
+        positive_timestamp_or_none(WARMUP_CRON_NEXT_RUN_AT.load(Ordering::Relaxed))
+            .or_else(|| next_warmup_cron_timestamp(warmup_cron_expression.as_str()))
+    } else {
+        None
+    };
     BackgroundTasksSettings {
         usage_polling_enabled: USAGE_POLLING_ENABLED.load(Ordering::Relaxed),
         usage_poll_interval_secs: USAGE_POLL_INTERVAL_SECS.load(Ordering::Relaxed),
@@ -84,14 +96,16 @@ pub(crate) fn background_tasks_settings() -> BackgroundTasksSettings {
         http_worker_min: HTTP_WORKER_MIN.load(Ordering::Relaxed),
         http_stream_worker_factor: HTTP_STREAM_WORKER_FACTOR.load(Ordering::Relaxed),
         http_stream_worker_min: HTTP_STREAM_WORKER_MIN.load(Ordering::Relaxed),
-        warmup_cron_enabled: WARMUP_CRON_ENABLED.load(Ordering::Relaxed),
-        warmup_cron_expression: current_mutex_string(
-            &WARMUP_CRON_EXPRESSION,
-            DEFAULT_WARMUP_CRON_EXPRESSION,
-        ),
+        warmup_cron_enabled,
+        warmup_cron_expression,
         warmup_message: current_mutex_string(&WARMUP_MESSAGE, DEFAULT_WARMUP_MESSAGE),
+        warmup_cron_next_run_at,
         requires_restart_keys: BACKGROUND_TASK_RESTART_REQUIRED_KEYS.to_vec(),
     }
+}
+
+fn positive_timestamp_or_none(value: i64) -> Option<i64> {
+    (value > 0).then_some(value)
 }
 
 /// 函数 `set_background_tasks_settings`

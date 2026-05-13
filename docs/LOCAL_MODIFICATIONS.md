@@ -5,22 +5,25 @@
 ## Web log key names and scheduled warmup
 
 - 提交：`待提交`
-- 标题：`Add scheduled account warmup and log key names`
+- 标题：`Support multiple scheduled account warmup cron schedules and log key names`
 
 ### 摘要
 
-这项本地修改补强了网关日志可读性，并加入可配置的账号定时预热能力。目标是减少冷启动请求的失败概率，同时让 Web Log 里“账号 / 密钥”列直接展示平台 Key 名称，而不是内部 Key ID。
+这项本地修改补强了网关日志可读性，并加入可配置的账号定时预热能力。目标是减少冷启动请求的失败概率，同时让 Web Log 里“账号 / 密钥”列直接展示平台 Key 名称，而不是内部 Key ID。Docker Compose 默认时区固定为 `Asia/Shanghai`，避免容器 UTC 时区导致定时预热时间偏移。
 
 核心行为：
 
 - Web Log 的“账号 / 密钥”列优先显示平台 Key 名称；没有名称时才回退为压缩后的 Key ID。tooltip 中保留完整 Key ID，便于排障。
 - 设置页“后台任务线程”新增“定时账号预热”开关，支持 Cron 表达式配置，默认 `0 */4 * * *`。
+- 定时预热支持用 `|` 分隔多个 Cron 表达式，例如 `0 7 * * *|10 12 * * *|20 17 * * *`，调度器会取最近一次触发时间。
+- 设置页会展示下一次预热时间与剩余倒计时，便于确认调度器是否已经进入等待状态。
 - 定时预热复用现有账号预热逻辑，会对当前所有可用网关账号发送轻量预热请求。
 - Cron 支持 5 段格式，也支持带秒的 6 段格式；表达式非法时只记录 warning，不让服务崩溃。
+- Docker Compose 的开发版、release 版和 all-in-one 部署均默认注入 `TZ=Asia/Shanghai`。
 - 预热模型选择优先使用 catalog 中第一个可 API 使用且 slug 包含 `mini` 的模型，例如 `gpt-5.4-mini`；没有 mini 时再回退到第一个可 API 使用模型。
 - catalog 缺失时的默认预热模型为 `gpt-5.4-mini`，尽量降低预热成本。
 
-合并上游时重点保护：`account_warmup.rs` 的 mini 模型优先策略、`usage/refresh/runner.rs` 的 warmup cron 调度、`BackgroundTaskSettings` 新增字段的前后端序列化、以及日志页密钥名称优先显示逻辑。
+合并上游时重点保护：`account_warmup.rs` 的 mini 模型优先策略、`usage/refresh/runner.rs` 的 warmup cron 调度和 `|` 多表达式解析、`BackgroundTaskSettings` 新增字段的前后端序列化、Docker Compose 的 `TZ=Asia/Shanghai`、以及日志页密钥名称优先显示逻辑。
 
 ## Active account routing
 

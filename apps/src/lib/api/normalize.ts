@@ -70,6 +70,7 @@ const DEFAULT_BACKGROUND_TASKS: BackgroundTaskSettings = {
   warmupCronEnabled: false,
   warmupCronExpression: "0 */4 * * *",
   warmupMessage: "hi",
+  warmupCronNextRunAt: null,
 };
 
 /**
@@ -1589,6 +1590,7 @@ export function normalizeBackgroundTasks(payload: unknown): BackgroundTaskSettin
       source.warmupMessage,
       DEFAULT_BACKGROUND_TASKS.warmupMessage
     ),
+    warmupCronNextRunAt: toNullableNumber(source.warmupCronNextRunAt),
   };
 }
 
