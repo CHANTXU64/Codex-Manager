@@ -51,6 +51,7 @@ export function Header() {
   const { canManageService, mode } = useRuntimeCapabilities();
   const { data: session } = useAppSession();
   const role = session?.role ?? "member";
+  const routeAccess = { role, mode: session?.mode ?? null };
 
   useEffect(() => {
     const current = String(serviceStatus.addr || DEFAULT_SERVICE_ADDR);
@@ -72,7 +73,7 @@ export function Header() {
    * 返回函数执行结果
    */
   const getPageTitle = () => {
-    return t(getTopLevelRouteLabel(currentShellPath, role));
+    return t(getTopLevelRouteLabel(currentShellPath, routeAccess));
   };
 
   const canLogoutWebSession =

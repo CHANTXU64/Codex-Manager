@@ -93,6 +93,7 @@ interface ApiKeyModalProps {
   apiKeyOwner?: ApiKeyOwner | null;
   distributionEnabled?: boolean;
   isAdminMode?: boolean;
+  showMemberOwnership?: boolean;
   onOwnerSaved?: () => Promise<void> | void;
 }
 
@@ -126,6 +127,7 @@ export function ApiKeyModal({
   apiKeyOwner,
   distributionEnabled = false,
   isAdminMode = true,
+  showMemberOwnership = isAdminMode,
   onOwnerSaved,
 }: ApiKeyModalProps) {
   const { t } = useI18n();
@@ -148,6 +150,7 @@ export function ApiKeyModal({
   const [isLoading, setIsLoading] = useState(false);
   const queryClient = useQueryClient();
   const isServiceReady = canAccessManagementRpc && serviceStatus.connected;
+  const memberOwnershipEnabled = isAdminMode && showMemberOwnership;
   const usesAccountPlanFilter =
     rotationStrategy === "account_rotation" ||
     rotationStrategy === "hybrid_rotation";
@@ -231,7 +234,9 @@ export function ApiKeyModal({
       setQuotaLimitUnit("k");
       setUpstreamBaseUrl("");
       setCustomKey("");
-      setOwnerUserId(distributionEnabled ? billableUsers[0]?.id || "" : "");
+      setOwnerUserId(
+        memberOwnershipEnabled && distributionEnabled ? billableUsers[0]?.id || "" : "",
+      );
       setGeneratedKey("");
       return;
     }
@@ -252,9 +257,18 @@ export function ApiKeyModal({
     setCustomKey("");
     setUpstreamBaseUrl(apiKey.upstreamBaseUrl || "");
     setOwnerUserId(
-      apiKeyOwner?.ownerKind === "user" ? apiKeyOwner.ownerUserId || "" : "",
+      memberOwnershipEnabled && apiKeyOwner?.ownerKind === "user"
+        ? apiKeyOwner.ownerUserId || ""
+        : "",
     );
-  }, [apiKey, apiKeyOwner, billableUsers, distributionEnabled, open]);
+  }, [
+    apiKey,
+    apiKeyOwner,
+    billableUsers,
+    distributionEnabled,
+    memberOwnershipEnabled,
+    open,
+  ]);
 
   const handleQuotaLimitUnitChange = (unit: QuotaLimitUnit) => {
     const currentTokens = parseQuotaLimitTokens(quotaLimitValue, quotaLimitUnit);
@@ -289,8 +303,10 @@ export function ApiKeyModal({
     setIsLoading(true);
     try {
       const normalizedOwnerUserId =
-        ownerUserId && ownerUserId !== "__none__" ? ownerUserId : "";
-      if (isAdminMode && distributionEnabled && !normalizedOwnerUserId) {
+        memberOwnershipEnabled && ownerUserId && ownerUserId !== "__none__"
+          ? ownerUserId
+          : "";
+      if (memberOwnershipEnabled && distributionEnabled && !normalizedOwnerUserId) {
         throw new Error(t("请选择平台 Key 归属成员"));
       }
       const params = {
@@ -325,7 +341,7 @@ export function ApiKeyModal({
         setGeneratedKey(result.key);
         toast.success(t("平台密钥已创建"));
       }
-      if (isAdminMode && savedKeyId && normalizedOwnerUserId) {
+      if (memberOwnershipEnabled && savedKeyId && normalizedOwnerUserId) {
         await appClient.setApiKeyOwner({
           keyId: savedKeyId,
           ownerKind: "user",
@@ -506,7 +522,7 @@ export function ApiKeyModal({
             </div>
           ) : null}
 
-          {isAdminMode ? (
+          {memberOwnershipEnabled ? (
           <div className="grid gap-2">
             <Label>{t("归属成员")}</Label>
             <Select

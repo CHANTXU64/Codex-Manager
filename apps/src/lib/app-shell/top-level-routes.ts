@@ -80,6 +80,7 @@ export const TOP_LEVEL_ROUTE_CONFIG = [
     path: "/account-manager",
     label: "成员账号",
     section: "users-keys",
+    accountSystemOnly: true,
     roles: ["system_admin", "admin"],
   },
   {
@@ -94,6 +95,7 @@ export const TOP_LEVEL_ROUTE_CONFIG = [
     path: "/model-groups",
     label: "模型组",
     section: "users-keys",
+    accountSystemOnly: true,
     roles: ["system_admin", "admin"],
   },
   {
@@ -129,6 +131,23 @@ export const TOP_LEVEL_ROUTE_CONFIG = [
 export type TopLevelRoutePath = (typeof TOP_LEVEL_ROUTE_CONFIG)[number]["path"];
 export type TopLevelRouteConfig = (typeof TOP_LEVEL_ROUTE_CONFIG)[number];
 
+export interface TopLevelRouteAccessContext {
+  role?: AppRole | string | null;
+  mode?: string | null;
+}
+
+export type TopLevelRouteAccess =
+  | AppRole
+  | string
+  | null
+  | undefined
+  | TopLevelRouteAccessContext;
+
+interface NormalizedTopLevelRouteAccessContext {
+  role: string;
+  mode: string | null;
+}
+
 export interface TopLevelRouteSection {
   id: TopLevelRouteSectionId;
   label: string;
@@ -141,6 +160,54 @@ const TOP_LEVEL_ROUTE_SET = new Set<TopLevelRoutePath>(
 
 function normalizeRole(role: AppRole | string | null | undefined): string {
   return role || "system_admin";
+}
+
+function normalizeMode(mode: string | null | undefined): string | null {
+  const normalizedMode = String(mode || "").trim().toLowerCase();
+  return normalizedMode || null;
+}
+
+function isTopLevelRouteAccessContext(
+  access: TopLevelRouteAccess,
+): access is TopLevelRouteAccessContext {
+  return Boolean(access && typeof access === "object" && !Array.isArray(access));
+}
+
+function normalizeAccessContext(
+  access: TopLevelRouteAccess,
+  mode?: string | null,
+): NormalizedTopLevelRouteAccessContext {
+  if (isTopLevelRouteAccessContext(access)) {
+    return {
+      role: normalizeRole(access.role),
+      mode: normalizeMode(access.mode),
+    };
+  }
+  return {
+    role: normalizeRole(access),
+    mode: normalizeMode(mode),
+  };
+}
+
+function isAccountSystemMode(mode: string | null): boolean {
+  return mode === "accounts";
+}
+
+function isAccountSystemOnlyRoute(route: TopLevelRouteConfig): boolean {
+  return "accountSystemOnly" in route && route.accountSystemOnly === true;
+}
+
+function isRouteAllowedForAccess(
+  route: TopLevelRouteConfig,
+  access: NormalizedTopLevelRouteAccessContext,
+): boolean {
+  if (!(route.roles as readonly string[]).includes(access.role)) {
+    return false;
+  }
+  if (isAccountSystemOnlyRoute(route) && !isAccountSystemMode(access.mode)) {
+    return false;
+  }
+  return true;
 }
 
 export function isAdminTopLevelRole(
@@ -164,11 +231,12 @@ export function toTopLevelRoutePath(path: string): TopLevelRoutePath {
 
 export function getTopLevelRouteLabel(
   path: string,
-  role?: AppRole | string | null,
+  access?: TopLevelRouteAccess,
 ): string {
   const normalizedPath = normalizeRoutePath(path);
   const route = TOP_LEVEL_ROUTE_CONFIG.find((item) => item.path === normalizedPath);
   if (!route) return "CodexManager";
+  const { role } = normalizeAccessContext(access);
   if (!isAdminTopLevelRole(role) && "memberLabel" in route) {
     return route.memberLabel;
   }
@@ -177,29 +245,34 @@ export function getTopLevelRouteLabel(
 
 export function isTopLevelRouteAllowedForRole(
   path: string,
-  role: AppRole | string | null | undefined,
+  access: TopLevelRouteAccess,
+  mode?: string | null,
 ): boolean {
   const normalizedPath = normalizeRoutePath(path);
-  const normalizedRole = normalizeRole(role);
   const route = TOP_LEVEL_ROUTE_CONFIG.find((item) => item.path === normalizedPath);
   if (!route) return false;
-  return (route.roles as readonly string[]).includes(normalizedRole);
+  return isRouteAllowedForAccess(route, normalizeAccessContext(access, mode));
 }
 
-export function getAllowedTopLevelRoutes(role: AppRole | string | null | undefined) {
-  const normalizedRole = normalizeRole(role);
+export function getAllowedTopLevelRoutes(
+  access: TopLevelRouteAccess,
+  mode?: string | null,
+) {
+  const normalizedAccess = normalizeAccessContext(access, mode);
   return TOP_LEVEL_ROUTE_CONFIG.filter((route) =>
-    (route.roles as readonly string[]).includes(normalizedRole),
+    isRouteAllowedForAccess(route, normalizedAccess),
   );
 }
 
 export function getAllowedTopLevelRouteSections(
-  role: AppRole | string | null | undefined,
+  access: TopLevelRouteAccess,
+  mode?: string | null,
 ): TopLevelRouteSection[] {
-  const adminRole = isAdminTopLevelRole(role);
+  const normalizedAccess = normalizeAccessContext(access, mode);
+  const adminRole = isAdminTopLevelRole(normalizedAccess.role);
   const sectionOrder = adminRole ? ADMIN_ROUTE_SECTIONS : MEMBER_ROUTE_SECTIONS;
   const sectionMap = new Map<TopLevelRouteSectionId, TopLevelRouteConfig[]>();
-  for (const route of getAllowedTopLevelRoutes(role)) {
+  for (const route of getAllowedTopLevelRoutes(normalizedAccess)) {
     const sectionId =
       !adminRole && "memberSection" in route ? route.memberSection : route.section;
     const current = sectionMap.get(sectionId) ?? [];
@@ -220,7 +293,8 @@ export function getAllowedTopLevelRouteSections(
 }
 
 export function getFirstAllowedTopLevelRoutePath(
-  role: AppRole | string | null | undefined,
+  access: TopLevelRouteAccess,
+  mode?: string | null,
 ): TopLevelRoutePath {
-  return getAllowedTopLevelRoutes(role)[0]?.path ?? "/";
+  return getAllowedTopLevelRoutes(access, mode)[0]?.path ?? "/";
 }

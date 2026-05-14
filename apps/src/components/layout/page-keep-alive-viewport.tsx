@@ -4,6 +4,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useMemo,
   useState,
   type ComponentType,
   type LazyExoticComponent,
@@ -13,6 +14,7 @@ import { Loader2 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import {
   type TopLevelRoutePath,
+  type TopLevelRouteAccessContext,
   getAllowedTopLevelRoutes,
   getFirstAllowedTopLevelRoutePath,
   getTopLevelRouteLabel,
@@ -80,15 +82,15 @@ function PagePanelFallback({ title }: { title: string }) {
 
 function LazyPagePanel({
   path,
-  role,
+  access,
 }: {
   path: TopLevelRoutePath;
-  role: string;
+  access: TopLevelRouteAccessContext;
 }) {
   const LazyPage = path === ROOT_ROUTE_PATH ? ROOT_PAGE_COMPONENT : LAZY_PAGE_COMPONENTS[path];
 
   return (
-    <Suspense fallback={<PagePanelFallback title={getTopLevelRouteLabel(path, role)} />}>
+    <Suspense fallback={<PagePanelFallback title={getTopLevelRouteLabel(path, access)} />}>
       <LazyPage />
     </Suspense>
   );
@@ -112,6 +114,10 @@ export function PageKeepAliveViewport({
   const pruneShellTabs = useAppStore((state) => state.pruneShellTabs);
   const { data: session, isLoading: isSessionLoading } = useAppSession();
   const role = session?.role ?? "member";
+  const routeAccess = useMemo(
+    () => ({ role, mode: session?.mode ?? null }),
+    [role, session?.mode],
+  );
 
   useEffect(() => {
     syncShellPathFromLocation(normalizedInitialPath);
@@ -129,20 +135,20 @@ export function PageKeepAliveViewport({
   }, [syncShellPathFromLocation]);
 
   useEffect(() => {
-    document.title = `${t(getTopLevelRouteLabel(currentShellPath, role))} - CodexManager`;
-  }, [currentShellPath, role, t]);
+    document.title = `${t(getTopLevelRouteLabel(currentShellPath, routeAccess))} - CodexManager`;
+  }, [currentShellPath, routeAccess, t]);
 
   useEffect(() => {
     if (isSessionLoading) return;
-    const allowedPaths = getAllowedTopLevelRoutes(role).map((route) => route.path);
-    pruneShellTabs(allowedPaths, getFirstAllowedTopLevelRoutePath(role));
-  }, [isSessionLoading, pruneShellTabs, role]);
+    const allowedPaths = getAllowedTopLevelRoutes(routeAccess).map((route) => route.path);
+    pruneShellTabs(allowedPaths, getFirstAllowedTopLevelRoutePath(routeAccess));
+  }, [isSessionLoading, pruneShellTabs, routeAccess]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
         {openShellTabs.map((path) => {
-          if (!isTopLevelRouteAllowedForRole(path, role)) {
+          if (!isTopLevelRouteAllowedForRole(path, routeAccess)) {
             return null;
           }
           const isActive = path === currentShellPath;
@@ -158,7 +164,7 @@ export function PageKeepAliveViewport({
                 isActive ? "block" : "hidden",
               )}
             >
-              {isInitialPanel ? initialChildren : <LazyPagePanel path={path} role={role} />}
+              {isInitialPanel ? initialChildren : <LazyPagePanel path={path} access={routeAccess} />}
             </section>
           );
         })}

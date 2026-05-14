@@ -42,8 +42,9 @@ async function loadTopLevelRoutesModule() {
 
 const routes = await loadTopLevelRoutesModule();
 
-test("管理员菜单按任务域分组", () => {
-  const sections = routes.getAllowedTopLevelRouteSections("admin");
+test("accounts 模式管理员菜单按任务域分组并保留账号体系入口", () => {
+  const access = { role: "admin", mode: "accounts" };
+  const sections = routes.getAllowedTopLevelRouteSections(access);
   assert.deepEqual(
     sections.map((section) => section.label),
     ["概览", "资源接入", "模型路由", "用户与密钥", "运行监控", "系统设置"]
@@ -59,10 +60,60 @@ test("管理员菜单按任务域分组", () => {
       ["/settings", "/plugins", "/author"],
     ]
   );
+  assert.equal(
+    routes.isTopLevelRouteAllowedForRole("/account-manager", access),
+    true
+  );
+  assert.equal(routes.isTopLevelRouteAllowedForRole("/model-groups", access), true);
+  assert.equal(routes.getTopLevelRouteLabel("/account-manager", access), "成员账号");
+  assert.equal(routes.getTopLevelRouteLabel("/model-groups", access), "模型组");
 });
 
-test("成员菜单只保留自助入口", () => {
-  const sections = routes.getAllowedTopLevelRouteSections("member");
+test("none/password 单人管理员模式隐藏账号体系入口但保留单人管理入口", () => {
+  for (const mode of ["none", "password"]) {
+    for (const role of ["system_admin", "admin"]) {
+      const access = { role, mode };
+      const paths = routes
+        .getAllowedTopLevelRoutes(access)
+        .map((route) => route.path);
+      assert.deepEqual(paths, [
+        "/",
+        "/accounts",
+        "/aggregate-api",
+        "/models",
+        "/apikeys",
+        "/logs",
+        "/settings",
+        "/plugins",
+        "/author",
+      ]);
+      assert.equal(
+        routes.isTopLevelRouteAllowedForRole("/account-manager", access),
+        false
+      );
+      assert.equal(
+        routes.isTopLevelRouteAllowedForRole("/model-groups", access),
+        false
+      );
+      assert.equal(routes.isTopLevelRouteAllowedForRole("/accounts", access), true);
+      assert.equal(routes.isTopLevelRouteAllowedForRole("/apikeys", access), true);
+      assert.equal(routes.getFirstAllowedTopLevelRoutePath(access), "/");
+    }
+  }
+});
+
+test("未解析 session mode 时不会闪现账号体系专属入口", () => {
+  const access = { role: "system_admin", mode: null };
+  const paths = routes.getAllowedTopLevelRoutes(access).map((route) => route.path);
+  assert.equal(paths.includes("/account-manager"), false);
+  assert.equal(paths.includes("/model-groups"), false);
+  assert.equal(paths.includes("/accounts"), true);
+  assert.equal(paths.includes("/apikeys"), true);
+});
+
+test("accounts 模式成员菜单只保留自助入口", () => {
+  const access = { role: "member", mode: "accounts" };
+  const sections = routes.getAllowedTopLevelRouteSections(access);
   assert.deepEqual(
     sections.map((section) => section.label),
     ["我的概览", "我的密钥", "可用模型", "使用记录", "账号设置"]
@@ -71,7 +122,12 @@ test("成员菜单只保留自助入口", () => {
     sections.map((section) => section.routes.map((route) => route.path)),
     [["/"], ["/apikeys"], ["/models"], ["/logs"], ["/settings"]]
   );
-  assert.equal(routes.getTopLevelRouteLabel("/apikeys", "member"), "我的密钥");
-  assert.equal(routes.getTopLevelRouteLabel("/models", "member"), "可用模型");
-  assert.equal(routes.getTopLevelRouteLabel("/settings", "member"), "账号设置");
+  assert.equal(routes.getTopLevelRouteLabel("/apikeys", access), "我的密钥");
+  assert.equal(routes.getTopLevelRouteLabel("/models", access), "可用模型");
+  assert.equal(routes.getTopLevelRouteLabel("/settings", access), "账号设置");
+  assert.equal(
+    routes.isTopLevelRouteAllowedForRole("/account-manager", access),
+    false
+  );
+  assert.equal(routes.isTopLevelRouteAllowedForRole("/model-groups", access), false);
 });

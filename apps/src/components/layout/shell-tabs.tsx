@@ -17,6 +17,7 @@ export function ShellTabs() {
   const closeShellTab = useAppStore((state) => state.closeShellTab);
   const { data: session } = useAppSession();
   const role = session?.role ?? "member";
+  const routeAccess = { role, mode: session?.mode ?? null };
 
   if (openShellTabs.length <= 1) {
     return null;
@@ -27,7 +28,7 @@ export function ShellTabs() {
       <div className="flex flex-wrap items-center gap-2">
         {openShellTabs.map((path) => {
           const isActive = path === currentShellPath;
-          const label = t(getTopLevelRouteLabel(path, role));
+          const label = t(getTopLevelRouteLabel(path, routeAccess));
           const canClose = path !== ROOT_ROUTE_PATH;
 
           return (

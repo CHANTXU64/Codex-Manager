@@ -108,6 +108,10 @@ export function Sidebar() {
   } = useAppStore();
   const { data: session } = useAppSession();
   const role = session?.role ?? "member";
+  const routeAccess = useMemo(
+    () => ({ role, mode: session?.mode ?? null }),
+    [role, session?.mode],
+  );
 
   const handleNavigate = useCallback(
     (href: string, event: MouseEvent<HTMLAnchorElement>) => {
@@ -134,7 +138,7 @@ export function Sidebar() {
   );
 
   const renderedItems = useMemo(() => {
-    const sections = getAllowedTopLevelRouteSections(role);
+    const sections = getAllowedTopLevelRouteSections(routeAccess);
     return sections.map((section, sectionIndex) => (
       <div
         key={section.id}
@@ -153,7 +157,7 @@ export function Sidebar() {
             const item = NAV_ITEM_BY_PATH.get(route.path);
             if (!item) return null;
             const navItem = { href: route.path, icon: item.icon };
-            const itemName = t(getTopLevelRouteLabel(route.path, role));
+            const itemName = t(getTopLevelRouteLabel(route.path, routeAccess));
             return (
               <NavItem
                 key={route.path}
@@ -168,7 +172,7 @@ export function Sidebar() {
         </div>
       </div>
     ));
-  }, [currentShellPath, handleNavigate, isSidebarOpen, role, t]);
+  }, [currentShellPath, handleNavigate, isSidebarOpen, routeAccess, t]);
 
   return (
     <div

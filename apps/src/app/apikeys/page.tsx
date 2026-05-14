@@ -190,6 +190,7 @@ export default function ApiKeysPage() {
   const { mode } = useRuntimeCapabilities();
   const { data: session } = useAppSession();
   const isAdminMode = isAdminRole(session?.role);
+  const showMemberOwnership = isAdminMode && session?.mode === "accounts";
   const serviceAddr = useAppStore((state) => state.serviceStatus.addr);
   const {
     apiKeys,
@@ -217,19 +218,19 @@ export default function ApiKeysPage() {
   const { data: accountManagerStatus } = useQuery({
     queryKey: ["account-manager", "status"],
     queryFn: () => appClient.getAccountManagerStatus(),
-    enabled: isUsageQueryEnabled && isPageActive && isAdminMode,
+    enabled: isUsageQueryEnabled && isPageActive && showMemberOwnership,
     retry: 1,
   });
   const { data: appUsers = [] } = useQuery<AppUser[]>({
     queryKey: ["account-manager", "users"],
     queryFn: () => appClient.listAppUsers(),
-    enabled: isUsageQueryEnabled && isPageActive && isAdminMode,
+    enabled: isUsageQueryEnabled && isPageActive && showMemberOwnership,
     retry: 1,
   });
   const { data: apiKeyOwners = [] } = useQuery<ApiKeyOwner[]>({
     queryKey: ["account-manager", "api-key-owners"],
     queryFn: () => appClient.listApiKeyOwners(),
-    enabled: isUsageQueryEnabled && isPageActive && isAdminMode,
+    enabled: isUsageQueryEnabled && isPageActive && showMemberOwnership,
     retry: 1,
   });
   const billableAppUsers = useMemo(
@@ -244,7 +245,8 @@ export default function ApiKeysPage() {
     () => new Map(apiKeyOwners.map((owner) => [owner.keyId, owner])),
     [apiKeyOwners],
   );
-  const distributionEnabled = Boolean(accountManagerStatus?.distributionEnabled);
+  const distributionEnabled =
+    showMemberOwnership && Boolean(accountManagerStatus?.distributionEnabled);
   const gatewayOrigin = useMemo(
     () =>
       resolveGatewayOrigin({
@@ -641,7 +643,7 @@ export default function ApiKeysPage() {
               <TableRow>
                 <TableHead>{t("密钥 / ID")}</TableHead>
                 <TableHead>{t("名称")}</TableHead>
-                {isAdminMode ? <TableHead>{t("归属成员")}</TableHead> : null}
+                {showMemberOwnership ? <TableHead>{t("归属成员")}</TableHead> : null}
                 <TableHead>{t("协议")}</TableHead>
                 <TableHead>{t("轮转策略")}</TableHead>
                 <TableHead>{t("绑定模型")}</TableHead>
@@ -658,7 +660,7 @@ export default function ApiKeysPage() {
                     <TableRow key={index}>
                       <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                      {isAdminMode ? (
+                      {showMemberOwnership ? (
                         <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                       ) : null}
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
@@ -673,7 +675,7 @@ export default function ApiKeysPage() {
                 ))
               ) : apiKeys.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isAdminMode ? 9 : 8} className="h-48 text-center">
+                  <TableCell colSpan={showMemberOwnership ? 9 : 8} className="h-48 text-center">
                     <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
                       <Plus className="h-8 w-8 opacity-20" />
                       <p>{t("创建密钥")}</p>
@@ -743,7 +745,7 @@ export default function ApiKeysPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-sm font-semibold">{key.name || t("未命名")}</TableCell>
-                      {isAdminMode ? (
+                      {showMemberOwnership ? (
                       <TableCell>
                         <Badge
                           variant={
@@ -921,9 +923,14 @@ export default function ApiKeysPage() {
         onOpenChange={setApiKeyModalOpen}
         apiKey={editingApiKey}
         appUsers={billableAppUsers}
-        apiKeyOwner={editingApiKey ? ownerByKeyId.get(editingApiKey.id) ?? null : null}
+        apiKeyOwner={
+          showMemberOwnership && editingApiKey
+            ? ownerByKeyId.get(editingApiKey.id) ?? null
+            : null
+        }
         distributionEnabled={distributionEnabled}
         isAdminMode={isAdminMode}
+        showMemberOwnership={showMemberOwnership}
         onOwnerSaved={handleOwnerSaved}
       />
       <ConfirmDialog
