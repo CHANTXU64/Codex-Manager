@@ -1,9 +1,19 @@
 use rusqlite::{params, params_from_iter, types::Value, Result, Row};
 
 use super::{
-    request_log_query, RequestLog, RequestLogQuerySummary, RequestLogTodaySummary,
-    RequestTokenStat, Storage,
+    request_log_query, RequestLog, RequestLogQuerySummary, RequestLogTodaySummary, RequestTokenStat,
+    Storage,
 };
+
+const DEFAULT_REQUEST_LOG_RETENTION_DAYS: i64 = 14;
+const REQUEST_LOG_RETENTION_DAYS_ENV: &str = "CODEXMANAGER_REQUEST_LOG_RETENTION_DAYS";
+
+fn request_log_retention_days() -> i64 {
+    std::env::var(REQUEST_LOG_RETENTION_DAYS_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i64>().ok())
+        .unwrap_or(DEFAULT_REQUEST_LOG_RETENTION_DAYS)
+}
 
 impl Storage {
     /// 函数 `ensure_request_logs_indexes`
@@ -390,9 +400,27 @@ impl Storage {
     /// # 返回
     /// 返回函数执行结果
     pub fn clear_request_logs(&self) -> Result<()> {
-        // 只清理请求明细日志，保留 token 统计用于仪表盘历史用量与费用汇总。
+        // 中文注释：清空日志前先把 token 明细滚成长期汇总，避免 API Key 配额/累计统计归零。
+        let _ = self.rollup_all_request_token_stats()?;
         self.conn.execute("DELETE FROM request_logs", [])?;
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
         Ok(())
+    }
+
+    pub fn prune_request_logs_before(&self, cutoff_ts: i64) -> Result<usize> {
+        self.conn.execute(
+            "DELETE FROM request_logs WHERE created_at < ?1",
+            [cutoff_ts],
+        )
+    }
+
+    pub fn prune_request_logs_by_retention(&self, now: i64) -> Result<usize> {
+        let days = request_log_retention_days();
+        if days <= 0 {
+            return Ok(0);
+        }
+        let cutoff = now.saturating_sub(days.saturating_mul(86_400));
+        self.prune_request_logs_before(cutoff)
     }
 
     /// 函数 `summarize_request_logs_between`

@@ -785,6 +785,9 @@ impl Storage {
             include_str!("../../migrations/056_quota_pools.sql"),
             |s| s.ensure_quota_pool_tables(),
         )?;
+        self.apply_compat_migration("057_observability_storage_compaction", |s| {
+            s.compact_observability_storage_for_existing_databases()
+        })?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_secrets_table()?;
@@ -799,6 +802,30 @@ impl Storage {
         self.ensure_model_catalog_models_table()?;
         self.ensure_account_subscriptions_table()?;
         self.ensure_quota_pool_tables()?;
+        Ok(())
+    }
+
+    fn compact_observability_storage_for_existing_databases(&self) -> Result<()> {
+        self.ensure_request_token_stats_table()?;
+        self.ensure_request_logs_table()?;
+        self.ensure_usage_secondary_columns()?;
+
+        let now = now_ts();
+        let mut touched = 0_usize;
+        if let Some(cutoff) = request_token_stats::retention_cutoff(
+            now,
+            request_token_stats::request_token_stats_retain_days(),
+        ) {
+            touched = touched.saturating_add(self.rollup_request_token_stats_before(cutoff)?);
+        }
+        touched = touched.saturating_add(self.prune_request_logs_by_retention(now)?);
+        touched = touched.saturating_add(
+            self.prune_usage_snapshots_all_accounts(usage::usage_snapshots_retain_per_account())?,
+        );
+
+        if touched > 0 {
+            let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        }
         Ok(())
     }
 

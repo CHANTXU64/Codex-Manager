@@ -61,7 +61,24 @@ impl Storage {
 
     pub fn api_key_total_token_usage(&self, key_id: &str) -> Result<i64> {
         let mut stmt = self.conn.prepare(
-            "SELECT
+            "WITH all_stats AS (
+                SELECT
+                    key_id,
+                    input_tokens,
+                    cached_input_tokens,
+                    output_tokens,
+                    total_tokens
+                FROM request_token_stats
+                UNION ALL
+                SELECT
+                    NULLIF(key_id, '') AS key_id,
+                    input_tokens,
+                    cached_input_tokens,
+                    output_tokens,
+                    total_tokens
+                FROM request_token_stat_rollups
+             )
+             SELECT
                 IFNULL(
                     SUM(
                         CASE
@@ -77,7 +94,7 @@ impl Storage {
                     ),
                     0
                 ) AS total_tokens
-             FROM request_token_stats
+             FROM all_stats
              WHERE key_id = ?1",
         )?;
         let mut rows = stmt.query([key_id])?;

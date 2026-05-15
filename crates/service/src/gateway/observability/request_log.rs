@@ -525,6 +525,16 @@ pub(crate) fn write_request_log_with_attempts(
         );
     }
 
+    if let Err(err) = storage.maybe_run_observability_maintenance(created_at) {
+        let err_text = err.to_string();
+        super::metrics::record_db_error(err_text.as_str());
+        log::warn!(
+            "event=gateway_observability_maintenance_failed request_log_id={} err={}",
+            request_log_id,
+            err_text
+        );
+    }
+
     if should_write_gateway_error_fallback(status_code, error) {
         crate::gateway::write_gateway_error_log(GatewayErrorLogInput {
             trace_id: trace_context.trace_id,

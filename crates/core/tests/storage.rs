@@ -1213,7 +1213,7 @@ fn insert_request_log_with_token_stat_writes_both_tables_in_one_call() {
     assert_eq!(logs[0].reasoning_output_tokens, Some(1));
 }
 
-/// 函数 `clear_request_logs_keeps_token_stats_for_usage_summary`
+/// 函数 `clear_request_logs_rolls_token_stats_into_long_term_totals`
 ///
 /// 作者: gaohongshun
 ///
@@ -1225,7 +1225,7 @@ fn insert_request_log_with_token_stat_writes_both_tables_in_one_call() {
 /// # 返回
 /// 无
 #[test]
-fn clear_request_logs_keeps_token_stats_for_usage_summary() {
+fn clear_request_logs_rolls_token_stats_into_long_term_totals() {
     let storage = Storage::open_in_memory().expect("open in memory");
     storage.init().expect("init schema");
     let created_at = now_ts();
@@ -1284,11 +1284,19 @@ fn clear_request_logs_keeps_token_stats_for_usage_summary() {
     let summary = storage
         .summarize_request_logs_between(created_at - 1, created_at + 1)
         .expect("summarize");
-    assert_eq!(summary.input_tokens, 100);
-    assert_eq!(summary.cached_input_tokens, 30);
-    assert_eq!(summary.output_tokens, 20);
-    assert_eq!(summary.reasoning_output_tokens, 5);
-    assert!(summary.estimated_cost_usd > 0.11);
+    assert_eq!(summary.input_tokens, 0);
+    assert_eq!(summary.cached_input_tokens, 0);
+    assert_eq!(summary.output_tokens, 0);
+    assert_eq!(summary.reasoning_output_tokens, 0);
+    assert_eq!(summary.estimated_cost_usd, 0.0);
+
+    let usage_by_key = storage
+        .summarize_request_token_stats_by_key()
+        .expect("summarize by key");
+    assert_eq!(usage_by_key.len(), 1);
+    assert_eq!(usage_by_key[0].key_id, "key-clear");
+    assert_eq!(usage_by_key[0].total_tokens, 120);
+    assert!(usage_by_key[0].estimated_cost_usd > 0.11);
 }
 
 /// 函数 `request_token_stats_can_summarize_total_tokens_by_key`
@@ -1614,6 +1622,16 @@ fn storage_can_roundtrip_api_key_quota_limit_and_usage() {
         storage
             .api_key_total_token_usage("key-quota-1")
             .expect("read usage"),
+        1150
+    );
+
+    storage
+        .rollup_all_request_token_stats()
+        .expect("roll up request stats");
+    assert_eq!(
+        storage
+            .api_key_total_token_usage("key-quota-1")
+            .expect("read rolled usage"),
         1150
     );
 
