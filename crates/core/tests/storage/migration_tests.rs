@@ -1024,6 +1024,46 @@ fn request_logs_compact_migration_drops_legacy_usage_columns_and_preserves_rows(
 }
 
 #[test]
+fn model_catalog_string_items_migration_tolerates_missing_legacy_tables() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init schema");
+
+    storage
+        .conn
+        .execute_batch(
+            "DELETE FROM schema_migrations WHERE version = '049_model_catalog_string_items';
+             DROP TABLE IF EXISTS model_catalog_additional_speed_tiers;
+             DROP TABLE IF EXISTS model_catalog_experimental_supported_tools;
+             DROP TABLE IF EXISTS model_catalog_input_modalities;
+             DROP TABLE IF EXISTS model_catalog_available_in_plans;",
+        )
+        .expect("simulate legacy string item cleanup");
+
+    storage
+        .init()
+        .expect("re-run init with missing legacy model catalog tables");
+
+    let applied_049: i64 = storage
+        .conn
+        .query_row(
+            "SELECT COUNT(1) FROM schema_migrations WHERE version = '049_model_catalog_string_items'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count 049 migration");
+    assert_eq!(applied_049, 1);
+    let string_items_table: i64 = storage
+        .conn
+        .query_row(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'model_catalog_string_items'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("check string item table");
+    assert_eq!(string_items_table, 1);
+}
+
+#[test]
 fn observability_storage_compaction_migration_rolls_up_and_prunes_legacy_rows() {
     let path = temp_db_path("observability-compaction");
     {

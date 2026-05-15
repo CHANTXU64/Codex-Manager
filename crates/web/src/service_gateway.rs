@@ -525,23 +525,26 @@ pub(super) async fn gateway_proxy(
     let (parts, body) = request.into_parts();
     let target_url = gateway_proxy_target_url(state.service_addr.as_str(), &parts.uri);
     let max_body_bytes = gateway_proxy_max_body_bytes();
-    let read_limit = if max_body_bytes == 0 {
-        usize::MAX
+
+    let outbound_body = if max_body_bytes == 0 {
+        reqwest::Body::wrap_stream(body.into_data_stream())
     } else {
-        max_body_bytes
-    };
-    let body = match to_bytes(body, read_limit).await {
-        Ok(body) => body,
-        Err(err) => {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                format!("gateway proxy request body error: {err}"),
-            )
-                .into_response();
+        match to_bytes(body, max_body_bytes).await {
+            Ok(body) => reqwest::Body::from(body),
+            Err(err) => {
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    format!("gateway proxy request body error: {err}"),
+                )
+                    .into_response();
+            }
         }
     };
 
-    let mut outbound = state.client.request(parts.method, target_url).body(body);
+    let mut outbound = state
+        .client
+        .request(parts.method, target_url)
+        .body(outbound_body);
     for (name, value) in parts.headers.iter() {
         if should_skip_gateway_request_header(name, value) {
             continue;

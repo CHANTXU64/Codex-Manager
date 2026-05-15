@@ -110,6 +110,13 @@ pub(crate) const ENV_OVERRIDE_CATALOG: &[EnvOverrideCatalogItem] = &[
         "0",
     ),
     EnvOverrideCatalogItem::new(
+        "CODEXMANAGER_GATEWAY_BLOCKED_PATHS",
+        "网关本地屏蔽路径",
+        ENV_OVERRIDE_SCOPE_SERVICE,
+        ENV_OVERRIDE_APPLY_MODE_RUNTIME,
+        "/v1/props",
+    ),
+    EnvOverrideCatalogItem::new(
         "CODEXMANAGER_GATEWAY_KEEPALIVE_FAILURE_BACKOFF_MAX_SECS",
         "保活失败退避上限（秒）",
         ENV_OVERRIDE_SCOPE_SERVICE,
