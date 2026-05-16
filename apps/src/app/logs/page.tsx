@@ -324,6 +324,26 @@ function formatTableTokenAmount(value: number | null | undefined): string {
   return Math.round(normalized).toLocaleString("zh-CN");
 }
 
+function isCacheMissCandidate(log: RequestLog): boolean {
+  const inputTokens = typeof log.inputTokens === "number" ? log.inputTokens : 0;
+  const cachedTokens = typeof log.cachedInputTokens === "number" ? log.cachedInputTokens : null;
+  return inputTokens >= 1024 && cachedTokens === 0;
+}
+
+function hasEarlierComparableRequest(log: RequestLog, logs: RequestLog[], index: number): boolean {
+  const keyId = String(log.keyId || "").trim();
+  const model = String(log.model || "").trim();
+  return logs.slice(index + 1).some((candidate) => {
+    if (keyId && String(candidate.keyId || "").trim() !== keyId) return false;
+    if (model && String(candidate.model || "").trim() !== model) return false;
+    return typeof candidate.inputTokens === "number" && candidate.inputTokens >= 1024;
+  });
+}
+
+function shouldHighlightCacheMiss(log: RequestLog, logs: RequestLog[], index: number): boolean {
+  return isCacheMissCandidate(log) && hasEarlierComparableRequest(log, logs, index);
+}
+
 /**
  * 函数 `fallbackAccountNameFromId`
  *
@@ -1948,10 +1968,15 @@ function LogsPageContent() {
                   </TableCell>
                 </TableRow>
               ) : (
-                logs.map((log: RequestLog) => (
+                logs.map((log: RequestLog, index: number) => {
+                  const highlightCacheMiss = shouldHighlightCacheMiss(log, logs, index);
+                  return (
                   <TableRow
-                    key={log.id}
-                    className="group text-xs hover:bg-muted/20"
+                    key={log.id || log.traceId || `${log.requestPath}-${log.createdAt}`}
+                    className={cn(
+                      "border-white/5 transition-colors hover:bg-muted/30",
+                      highlightCacheMiss && "bg-red-500/5 hover:bg-red-500/10",
+                    )}
                   >
                     <TableCell className="px-4 py-3 font-mono text-[11px] text-muted-foreground">
                       {formatTsFromSeconds(log.createdAt, t("未知时间"))}
@@ -1992,7 +2017,7 @@ function LogsPageContent() {
                         <span>
                           {t("输入")} {formatTableTokenAmount(log.inputTokens)}
                         </span>
-                        <span className="opacity-60">
+                        <span className={cn("flex items-center gap-1", highlightCacheMiss ? "text-red-600 dark:text-red-300" : "opacity-60")}>
                           {t("缓存")} {formatTableTokenAmount(log.cachedInputTokens)}
                         </span>
                       </div>
@@ -2001,7 +2026,8 @@ function LogsPageContent() {
                       <ErrorInfoCell error={log.error} />
                     </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>
