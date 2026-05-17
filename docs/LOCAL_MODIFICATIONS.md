@@ -71,8 +71,10 @@
 - 补充 helper 测试覆盖多 Cron 表达式的前端格式校验，以及剩余时间的未来、过期、缺失三种显示分支。
 - 补充 Rust 回归测试覆盖任一 `|` 分段非法时整体拒绝、无法计算下一次触发时间时拒绝，以及 settings snapshot 中 `warmupCronNextRunAt` 的 camelCase 序列化。
 - 已移除 fork 中的 mini 模型优先预热策略，`account_warmup.rs` 回到上游官方模型选择逻辑。
+- 账号预热的流式请求必须读到 `response.completed`、`response.done` 或 `[DONE]` 才记录成功；`response.failed`、`response.incomplete` 和错误 SSE 帧会保留真实失败原因，避免只收到 2xx 响应头就提前关闭连接。
+- 账号预热真正完成后会为该账号入队 usage refresh，让账号页更快刷新额度倒计时。
 
-合并上游时重点保护：`usage/refresh/runner.rs` 的 warmup cron 调度和 `|` 多表达式解析、`BackgroundTaskSettings` 新增字段的前后端序列化、Docker Compose 的 `TZ=Asia/Shanghai`、以及日志页密钥名称优先显示逻辑。
+合并上游时重点保护：`usage/refresh/runner.rs` 的 warmup cron 调度和 `|` 多表达式解析、`BackgroundTaskSettings` 新增字段的前后端序列化、Docker Compose 的 `TZ=Asia/Shanghai`、日志页密钥名称优先显示逻辑，以及 `account_warmup.rs` 中必须 drain SSE 到终止帧后才判定预热成功的逻辑。
 
 ## Active account routing
 
