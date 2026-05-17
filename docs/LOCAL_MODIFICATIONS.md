@@ -2,6 +2,25 @@
 
 本文件只记录本地 fork / 我们自己维护的修改，避免把本地定制混入官方功能说明文档。
 
+## Web logs cache anomaly highlighting
+
+- 提交：`d4309812 Highlight cache miss rows in logs`
+- 标题：`Highlight cache miss rows in logs`
+
+### 摘要
+
+这项本地修改在 Web Logs 页面高亮疑似缓存异常的长上下文请求，方便排查 active account 是否稳定复用同一账号，以及长上下文请求是否正常命中上游缓存。
+
+核心行为：
+
+- 当请求输入 token 数不少于 1024，且 `cachedInputTokens` 明确为 `0` 时，将该请求视为缓存异常候选。
+- 只有当前列表中存在更早的可比较请求时才高亮，避免首个长上下文请求被误标为异常。
+- 可比较请求必须具备相同平台 Key、相同模型和相同请求路径；缺少任一字段时不高亮，降低不同 prompt 被误判的概率。
+- 命中的表格行使用淡红背景，缓存 token 文案显示为“缓存异常”并使用红色强调；hover 状态也保持红色提示。
+- 表格行 key 回退为 `traceId` 或请求路径加时间，避免缺少 `id` 时 React key 不稳定。
+
+合并上游时重点保护：`apps/src/app/logs/page.tsx` 中缓存异常判定 helper、日志行高亮 class，以及缓存 token 文案的红色强调逻辑。
+
 ## Local props probe handling
 
 - 提交：`3d05626 Intercept local props probes`
