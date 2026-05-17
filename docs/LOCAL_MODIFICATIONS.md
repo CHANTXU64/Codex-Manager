@@ -63,16 +63,16 @@
 - 定时预热复用现有账号预热逻辑，会对当前所有可用网关账号发送轻量预热请求。
 - Cron 支持 5 段格式，也支持带秒的 6 段格式；表达式保存采用严格校验，任一 `|` 分段非法或无法计算下一次触发时间都会拒绝保存，并提示具体第几项有问题。
 - Docker Compose 的开发版、release 版和 all-in-one 部署均默认注入 `TZ=Asia/Shanghai`。
-- 预热模型选择优先使用 catalog 中第一个可 API 使用且 slug 包含 `mini` 的模型，例如 `gpt-5.4-mini`；没有 mini 时再回退到第一个可 API 使用模型。
-- catalog 缺失时的默认预热模型为 `gpt-5.4-mini`，尽量降低预热成本。
+- 账号预热的模型选择保持上游官方行为：使用 catalog 中第一个可 API 使用模型；catalog 缺失时默认 `gpt-5.3-codex`。
 
 本次加固：
 
 - 前端设置页剩余时间逻辑区分未来、已到期和缺失 `warmupCronNextRunAt`，避免过期时间被强行显示成 `0s`。
 - 补充 helper 测试覆盖多 Cron 表达式的前端格式校验，以及剩余时间的未来、过期、缺失三种显示分支。
 - 补充 Rust 回归测试覆盖任一 `|` 分段非法时整体拒绝、无法计算下一次触发时间时拒绝，以及 settings snapshot 中 `warmupCronNextRunAt` 的 camelCase 序列化。
+- 已移除 fork 中的 mini 模型优先预热策略，`account_warmup.rs` 回到上游官方模型选择逻辑。
 
-合并上游时重点保护：`account_warmup.rs` 的 mini 模型优先策略、`usage/refresh/runner.rs` 的 warmup cron 调度和 `|` 多表达式解析、`BackgroundTaskSettings` 新增字段的前后端序列化、Docker Compose 的 `TZ=Asia/Shanghai`、以及日志页密钥名称优先显示逻辑。
+合并上游时重点保护：`usage/refresh/runner.rs` 的 warmup cron 调度和 `|` 多表达式解析、`BackgroundTaskSettings` 新增字段的前后端序列化、Docker Compose 的 `TZ=Asia/Shanghai`、以及日志页密钥名称优先显示逻辑。
 
 ## Active account routing
 

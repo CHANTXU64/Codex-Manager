@@ -15,7 +15,7 @@ use crate::usage_token_refresh::{refresh_and_persist_access_token, token_refresh
 const DEFAULT_WARMUP_MESSAGE: &str = "hi";
 const FALLBACK_WARMUP_MESSAGE: &str = "你好";
 const WARMUP_UPSTREAM_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
-const DEFAULT_WARMUP_MODEL: &str = "gpt-5.4-mini";
+const DEFAULT_WARMUP_MODEL: &str = "gpt-5.3-codex";
 const WARMUP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const WARMUP_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -306,16 +306,11 @@ fn resolve_warmup_model_slug(storage: &Storage) -> String {
     read_managed_model_catalog_from_storage(storage)
         .ok()
         .and_then(|catalog| {
-            let supported = catalog
+            catalog
                 .items
                 .into_iter()
-                .filter(|item| item.model.supported_in_api)
-                .collect::<Vec<_>>();
-            supported
-                .iter()
-                .find(|item| item.model.slug.to_ascii_lowercase().contains("mini"))
-                .or_else(|| supported.first())
-                .map(|item| item.model.slug.clone())
+                .find(|item| item.model.supported_in_api)
+                .map(|item| item.model.slug)
         })
         .filter(|slug| !slug.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_WARMUP_MODEL.to_string())
@@ -422,28 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_warmup_model_slug_prefers_first_supported_mini_model() {
-        let storage = Storage::open_in_memory().expect("open in-memory storage");
-        storage.init().expect("init in-memory storage");
-        save_managed_model_catalog_with_storage(
-            &storage,
-            &ManagedModelCatalogResult {
-                items: vec![
-                    make_model("gpt-hidden", 0, false),
-                    make_model("gpt-latest", 1, true),
-                    make_model("gpt-5.4-mini", 2, true),
-                    make_model("gpt-older-mini", 3, true),
-                ],
-                ..ManagedModelCatalogResult::default()
-            },
-        )
-        .expect("save model catalog");
-
-        assert_eq!(resolve_warmup_model_slug(&storage), "gpt-5.4-mini");
-    }
-
-    #[test]
-    fn resolve_warmup_model_slug_uses_first_supported_model_when_no_mini_exists() {
+    fn resolve_warmup_model_slug_uses_first_supported_model_from_catalog_order() {
         let storage = Storage::open_in_memory().expect("open in-memory storage");
         storage.init().expect("init in-memory storage");
         save_managed_model_catalog_with_storage(
