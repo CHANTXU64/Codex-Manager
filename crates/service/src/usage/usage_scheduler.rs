@@ -2,7 +2,7 @@ use rand::Rng;
 use std::thread;
 use std::time::Duration;
 
-pub(crate) const DEFAULT_USAGE_POLL_INTERVAL_SECS: u64 = 600;
+pub(crate) const DEFAULT_USAGE_POLL_INTERVAL_SECS: u64 = 120;
 pub(crate) const DEFAULT_GATEWAY_KEEPALIVE_INTERVAL_SECS: u64 = 180;
 pub(crate) const DEFAULT_USAGE_POLL_JITTER_SECS: u64 = 5;
 pub(crate) const DEFAULT_GATEWAY_KEEPALIVE_JITTER_SECS: u64 = 5;

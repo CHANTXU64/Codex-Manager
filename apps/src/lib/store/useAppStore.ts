@@ -104,7 +104,7 @@ export const useAppStore = create<AppState>((set) => ({
     sseKeepaliveIntervalMs: 15000,
     backgroundTasks: {
       usagePollingEnabled: true,
-      usagePollIntervalSecs: 600,
+      usagePollIntervalSecs: 120,
       gatewayKeepaliveEnabled: true,
       gatewayKeepaliveIntervalSecs: 180,
       tokenRefreshPollingEnabled: true,

@@ -1,11 +1,13 @@
 import { invoke, withAddr } from "./transport";
 import { normalizeModelCatalog, normalizeRequestLogs } from "./normalize";
 import type {
+  AccountQuotaConsumption,
   DashboardAdminUsageSummary,
   DashboardDailyUsagePoint,
   DashboardSourceUsageSummary,
   DashboardTokenUsage,
   DashboardUserUsageSummary,
+  DailyQuotaConsumptionPoint,
   MemberDashboardAlert,
   MemberDashboardApiKeySummary,
   MemberDashboardKeyUsage,
@@ -110,6 +112,31 @@ function readSourceUsageSummary(value: unknown): DashboardSourceUsageSummary | n
   };
 }
 
+function readAccountQuotaConsumption(value: unknown): AccountQuotaConsumption | null {
+  const source = asRecord(value);
+  const accountId = asString(source.accountId ?? source.account_id);
+  if (!accountId) return null;
+  return {
+    accountId,
+    accountLabel: asString(source.accountLabel ?? source.account_label),
+    consumedPercent: asNumber(source.consumedPercent ?? source.consumed_percent),
+  };
+}
+
+function readDailyQuotaConsumptionPoint(value: unknown): DailyQuotaConsumptionPoint {
+  const source = asRecord(value);
+  return {
+    dayStartTs: asNumber(source.dayStartTs ?? source.day_start_ts),
+    dayEndTs: asNumber(source.dayEndTs ?? source.day_end_ts),
+    totalConsumedPercent: asNumber(
+      source.totalConsumedPercent ?? source.total_consumed_percent,
+    ),
+    byAccount: asArray(source.byAccount ?? source.by_account)
+      .map(readAccountQuotaConsumption)
+      .filter((item): item is AccountQuotaConsumption => Boolean(item)),
+  };
+}
+
 function readAdminUsageSummary(value: unknown): DashboardAdminUsageSummary {
   const source = asRecord(value);
   return {
@@ -121,6 +148,9 @@ function readAdminUsageSummary(value: unknown): DashboardAdminUsageSummary {
     dailyUsage: asArray(source.dailyUsage ?? source.daily_usage).map(
       readDailyUsagePoint,
     ),
+    dailyQuotaConsumption: asArray(
+      source.dailyQuotaConsumption ?? source.daily_quota_consumption,
+    ).map(readDailyQuotaConsumptionPoint),
     users: asArray(source.users)
       .map(readUserUsageSummary)
       .filter((item): item is DashboardUserUsageSummary => Boolean(item)),

@@ -1,4 +1,6 @@
-use super::{parse_interval_secs, run_blocking_poll_loop_with_sleep};
+use super::{
+    parse_interval_secs, run_blocking_poll_loop_with_sleep, DEFAULT_USAGE_POLL_INTERVAL_SECS,
+};
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
@@ -193,4 +195,9 @@ fn parse_interval_secs_falls_back_and_applies_minimum() {
     assert_eq!(parse_interval_secs(Some("abc"), 600, 30), 600);
     assert_eq!(parse_interval_secs(Some("5"), 600, 30), 30);
     assert_eq!(parse_interval_secs(Some("120"), 600, 30), 120);
+}
+
+#[test]
+fn default_usage_poll_interval_is_two_minutes() {
+    assert_eq!(DEFAULT_USAGE_POLL_INTERVAL_SECS, 120);
 }

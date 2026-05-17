@@ -21,6 +21,64 @@
 
 合并上游时重点保护：`apps/src/app/logs/page.tsx` 中缓存异常判定 helper、日志行高亮 class，以及缓存 token 文案的红色强调逻辑。
 
+## Daily quota consumption chart and usage polling
+
+Status: active
+
+Files:
+
+- `crates/core/migrations/063_quota_consumption_daily.sql`
+- `crates/core/src/storage/quota_consumption_daily.rs`
+- `crates/core/src/storage/mod.rs`
+- `crates/core/src/rpc/types.rs`
+- `crates/service/src/usage/usage_snapshot_store.rs`
+- `crates/service/src/usage/usage_scheduler.rs`
+- `crates/service/src/usage/tests/usage_scheduler_tests.rs`
+- `crates/service/src/dashboard.rs`
+- `apps/src/app/page.tsx`
+- `apps/src/lib/api/dashboard-client.ts`
+- `apps/src/lib/api/normalize.ts`
+- `apps/src/lib/store/useAppStore.ts`
+- `apps/src/types/dashboard.ts`
+- `docs/CHANTXU64/2026-05-17-daily-quota-consumption-design.md`
+
+Summary:
+
+- 首页管理员用量分析新增每日账号 5h 额度消耗百分比图表，并把默认用量轮询间隔从 10 分钟缩短到 2 分钟。
+
+What changed:
+
+- 新增 `quota_consumption_daily` 存储表，按账号和本地日期累计 5h 额度消耗百分比。
+- `store_usage_snapshot` 在写入新快照前读取同账号上一条快照，只累计 `used_percent` 正向增长；检测到 5h 重置时不补记上周期剩余额度，例如 `87% -> 0%` 不会把剩余 `13%` 加到首页消耗统计。
+- `read_admin_usage_summary` 返回 `dailyQuotaConsumption`，前端首页用堆叠柱状图展示每日总消耗及账号拆分。
+- 后端、前端默认配置中的 `usagePollIntervalSecs` 从 `600` 改为 `120`，仍可通过设置项或 `CODEXMANAGER_USAGE_POLL_INTERVAL_SECS` 覆盖。
+
+Why it matters:
+
+- Token 用量不能直接反映账号池 5h 额度消耗情况；该图表用于观察账号池当天额度消耗节奏。
+- 重置刷新不代表用户把重置前剩余额度用完，补记剩余额度会制造虚假的消耗尖峰。
+- 2 分钟轮询降低快照间隔导致的漏记概率。
+
+Merge protection:
+
+- Preserve when: 首页仍需要展示账号池 5h 额度消耗趋势，或仍需要更高频自动刷新账号额度。
+- Drop when: upstream 已提供等价且验证过的每日额度消耗统计，并且确认重置刷新不会补记剩余额度。
+- Ask user when: upstream 改动了 usage snapshot 结构、dashboard summary schema、后台轮询配置，或出现与 `quota_consumption_daily` 相关的迁移冲突。
+
+Verification:
+
+```bash
+cargo fmt --check
+cargo test -p codexmanager-service default_usage_poll_interval_is_two_minutes -- --nocapture
+cargo test -p codexmanager-service reset_refresh_does_not_count_previous_remaining_quota_as_consumed -- --nocapture
+cargo test -p codexmanager-service normal_usage_increase_counts_delta -- --nocapture
+pnpm run build:desktop
+```
+
+Feature docs: `docs/CHANTXU64/2026-05-17-daily-quota-consumption-design.md`
+
+Upstream status: fork-only
+
 ## Local props probe handling
 
 - 提交：`3d05626 Intercept local props probes`

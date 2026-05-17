@@ -69,16 +69,20 @@ import { formatLocalDateTimeFromSeconds } from "@/lib/utils/time";
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   XAxis,
   YAxis,
 } from "recharts";
 import type {
+  AccountQuotaConsumption,
   DashboardAdminUsageSummary,
   DashboardDailyUsagePoint,
   DashboardSourceUsageSummary,
   DashboardTokenUsage,
   DashboardUserUsageSummary,
+  DailyQuotaConsumptionPoint,
   MemberDashboardAlert,
   MemberDashboardKeyUsage,
   MemberDashboardSummary,
@@ -445,6 +449,152 @@ function DailyTokenLineChart({
   );
 }
 
+const ACCOUNT_COLORS = [
+  "var(--color-acct-0, hsl(210 70% 55%))",
+  "var(--color-acct-1, hsl(150 60% 45%))",
+  "var(--color-acct-2, hsl(30 80% 55%))",
+  "var(--color-acct-3, hsl(340 65% 55%))",
+  "var(--color-acct-4, hsl(270 55% 55%))",
+  "var(--color-acct-5, hsl(60 70% 45%))",
+  "var(--color-acct-6, hsl(190 60% 45%))",
+  "var(--color-acct-7, hsl(10 70% 55%))",
+];
+
+function DailyQuotaConsumptionChart({
+  points,
+  className,
+}: {
+  points: DailyQuotaConsumptionPoint[];
+  className?: string;
+}) {
+  const { t } = useI18n();
+
+  const allAccountIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const point of points) {
+      for (const acct of point.byAccount) {
+        ids.add(acct.accountId);
+      }
+    }
+    return Array.from(ids);
+  }, [points]);
+
+  const accountIdToLabel = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const point of points) {
+      for (const acct of point.byAccount) {
+        if (!map.has(acct.accountId)) {
+          map.set(acct.accountId, acct.accountLabel || acct.accountId);
+        }
+      }
+    }
+    return map;
+  }, [points]);
+
+  const chartConfig = useMemo(() => {
+    const config: Record<string, { label: string; color: string }> = {
+      total: { label: t("总计"), color: "var(--primary)" },
+    };
+    allAccountIds.forEach((id, idx) => {
+      config[id] = {
+        label: accountIdToLabel.get(id) || id,
+        color: ACCOUNT_COLORS[idx % ACCOUNT_COLORS.length],
+      };
+    });
+    return config satisfies ChartConfig;
+  }, [allAccountIds, accountIdToLabel, t]);
+
+  const chartData = useMemo(
+    () =>
+      points.map((item) => {
+        const row: Record<string, string | number> = {
+          date: formatShortDate(item.dayStartTs),
+          total: item.totalConsumedPercent,
+        };
+        for (const acct of item.byAccount) {
+          row[acct.accountId] = acct.consumedPercent;
+        }
+        return row;
+      }),
+    [points],
+  );
+
+  if (points.length === 0 || points.every((p) => p.totalConsumedPercent === 0)) {
+    return (
+      <div
+        className={cn(
+          "flex h-64 w-full items-center justify-center rounded-xl bg-background/30 p-3 text-sm text-muted-foreground",
+          className,
+        )}
+      >
+        {t("暂无额度消耗数据")}
+      </div>
+    );
+  }
+
+  return (
+    <ChartContainer
+      config={chartConfig}
+      className={cn("h-64 w-full rounded-xl bg-background/30 p-3", className)}
+      initialDimension={{ width: 720, height: 256 }}
+    >
+      <BarChart
+        accessibilityLayer
+        data={chartData}
+        margin={{ top: 18, right: 14, left: 10, bottom: 4 }}
+      >
+        <CartesianGrid vertical={false} strokeDasharray="4 8" />
+        <XAxis
+          dataKey="date"
+          tickLine={false}
+          axisLine={false}
+          tickMargin={10}
+          minTickGap={18}
+        />
+        <YAxis
+          tickLine={false}
+          axisLine={false}
+          tickMargin={10}
+          width={44}
+          tickFormatter={(value) => `${Number(value)}`}
+        />
+        <ChartTooltip
+          cursor={false}
+          content={
+            <ChartTooltipContent
+              indicator="dot"
+              labelFormatter={(value) => value}
+              formatter={(value, name) => {
+                const label =
+                  typeof name === "string" && chartConfig[name]
+                    ? chartConfig[name].label
+                    : String(name);
+                return (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">{label}</span>
+                    <span className="font-mono font-medium text-foreground">
+                      {Number(value).toFixed(1)}%
+                    </span>
+                  </div>
+                );
+              }}
+            />
+          }
+        />
+        {allAccountIds.map((id, idx) => (
+          <Bar
+            key={id}
+            dataKey={id}
+            stackId="accounts"
+            fill={ACCOUNT_COLORS[idx % ACCOUNT_COLORS.length]}
+            radius={idx === allAccountIds.length - 1 ? [4, 4, 0, 0] : undefined}
+          />
+        ))}
+      </BarChart>
+    </ChartContainer>
+  );
+}
+
 function UsageRankList<T extends { todayUsage: DashboardTokenUsage; rangeUsage: DashboardTokenUsage }>({
   title,
   items,
@@ -568,6 +718,15 @@ function AdminUsageAnalyticsCard({
       <CardContent className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
         <div className="space-y-3">
           <DailyTokenLineChart points={summary.dailyUsage} />
+          {summary.dailyQuotaConsumption.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <BarChart3 className="h-3.5 w-3.5" />
+                {t("每日额度消耗")}
+              </div>
+              <DailyQuotaConsumptionChart points={summary.dailyQuotaConsumption} />
+            </div>
+          )}
           <div className="grid gap-3 text-xs sm:grid-cols-3">
             <div className="rounded-lg bg-background/30 px-3 py-2">
               <div className="text-muted-foreground">{t("今日请求")}</div>

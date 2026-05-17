@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{Duration, Local, LocalResult, TimeZone};
 use codexmanager_core::rpc::types::{
-    ApiKeySummary, DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint,
-    DashboardSourceUsageSummary, DashboardTokenUsageResult, DashboardUserUsageSummary,
-    MemberDashboardAlert, MemberDashboardApiKeySummary, MemberDashboardKeyUsage,
-    MemberDashboardModelUsage, MemberDashboardSummaryResult, MemberDashboardUsagePoint,
-    MemberDashboardUsageToday, MemberDashboardWalletResult, ModelInfo, RequestLogListParams,
+    AccountQuotaConsumption, ApiKeySummary, DailyQuotaConsumptionPoint,
+    DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint, DashboardSourceUsageSummary,
+    DashboardTokenUsageResult, DashboardUserUsageSummary, MemberDashboardAlert,
+    MemberDashboardApiKeySummary, MemberDashboardKeyUsage, MemberDashboardModelUsage,
+    MemberDashboardSummaryResult, MemberDashboardUsagePoint, MemberDashboardUsageToday,
+    MemberDashboardWalletResult, ModelInfo, RequestLogListParams,
 };
 use codexmanager_core::storage::{
     DailyTokenUsageRollup, SourceTokenUsageRollup, TokenUsageRollup, UserTokenUsageRollup,
@@ -104,6 +105,7 @@ pub(crate) fn read_admin_usage_summary(
             )
             .map_err(|err| format!("summarize range aggregate API usage failed: {err}"))?,
     );
+    let daily_quota_consumption = build_daily_quota_consumption(&storage, range_start, range_end)?;
 
     Ok(DashboardAdminUsageSummaryResult {
         range_start_ts: range_start,
@@ -112,6 +114,7 @@ pub(crate) fn read_admin_usage_summary(
         today_end_ts: today_end,
         today_usage: dashboard_usage(&today_usage),
         daily_usage,
+        daily_quota_consumption,
         users,
         openai_accounts,
         aggregate_apis,
@@ -263,6 +266,68 @@ fn build_dashboard_user_summaries(
             .then_with(|| a.user_id.cmp(&b.user_id))
     });
     Ok(results)
+}
+
+fn build_daily_quota_consumption(
+    storage: &codexmanager_core::storage::Storage,
+    range_start: i64,
+    range_end: i64,
+) -> Result<Vec<DailyQuotaConsumptionPoint>, String> {
+    let records = storage
+        .read_quota_consumption_daily_between(range_start, range_end)
+        .map_err(|err| format!("read quota consumption daily failed: {err}"))?;
+
+    let accounts = storage
+        .list_accounts()
+        .map_err(|err| format!("list accounts failed: {err}"))?;
+    let label_map = accounts
+        .iter()
+        .map(|a| (a.id.as_str(), a.label.as_str()))
+        .collect::<HashMap<_, _>>();
+
+    let mut by_day: BTreeMap<i64, HashMap<&str, f64>> = BTreeMap::new();
+    for record in &records {
+        let entry = by_day.entry(record.day_start_ts).or_default();
+        let acc = entry.entry(record.account_id.as_str()).or_default();
+        *acc += record.consumed_percent;
+    }
+
+    let mut result = Vec::new();
+    let mut cursor = range_start;
+    while cursor < range_end {
+        let next = cursor.saturating_add(DAY_SECONDS).min(range_end);
+        let account_map = by_day.remove(&cursor).unwrap_or_default();
+        let mut by_account = Vec::new();
+        let mut total = 0.0_f64;
+        for (_, consumed) in &account_map {
+            total += consumed;
+        }
+        for (account_id, consumed) in account_map {
+            let label = label_map
+                .get(account_id)
+                .copied()
+                .unwrap_or(account_id)
+                .to_string();
+            by_account.push(AccountQuotaConsumption {
+                account_id: account_id.to_string(),
+                account_label: label,
+                consumed_percent: (consumed * 100.0).round() / 100.0,
+            });
+        }
+        by_account.sort_by(|a, b| {
+            b.consumed_percent
+                .partial_cmp(&a.consumed_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        result.push(DailyQuotaConsumptionPoint {
+            day_start_ts: cursor,
+            day_end_ts: next,
+            total_consumed_percent: (total * 100.0).round() / 100.0,
+            by_account,
+        });
+        cursor = next;
+    }
+    Ok(result)
 }
 
 fn account_source_metadata(

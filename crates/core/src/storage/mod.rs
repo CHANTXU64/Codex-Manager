@@ -19,6 +19,7 @@ mod model_options;
 mod model_price_rules;
 mod model_sources;
 mod plugins;
+mod quota_consumption_daily;
 mod quota_pools;
 mod request_log_query;
 mod request_logs;
@@ -26,6 +27,8 @@ mod request_token_stats;
 mod settings;
 mod tokens;
 mod usage;
+
+pub use quota_consumption_daily::QuotaConsumptionDailyRecord;
 
 #[derive(Debug, Clone)]
 pub struct Account {
@@ -1061,6 +1064,12 @@ impl Storage {
         self.ensure_model_source_tables()?;
         self.ensure_aggregate_api_supplier_model_tables()?;
         self.ensure_model_group_tables()?;
+        self.apply_sql_or_compat_migration(
+            "063_quota_consumption_daily",
+            include_str!("../../migrations/063_quota_consumption_daily.sql"),
+            |s| s.ensure_quota_consumption_daily_table(),
+        )?;
+        self.ensure_quota_consumption_daily_table()?;
         Ok(())
     }
 

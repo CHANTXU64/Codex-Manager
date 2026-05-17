@@ -47,9 +47,23 @@ export interface DashboardAdminUsageSummary {
   todayEndTs: number;
   todayUsage: DashboardTokenUsage;
   dailyUsage: DashboardDailyUsagePoint[];
+  dailyQuotaConsumption: DailyQuotaConsumptionPoint[];
   users: DashboardUserUsageSummary[];
   openaiAccounts: DashboardSourceUsageSummary[];
   aggregateApis: DashboardSourceUsageSummary[];
+}
+
+export interface DailyQuotaConsumptionPoint {
+  dayStartTs: number;
+  dayEndTs: number;
+  totalConsumedPercent: number;
+  byAccount: AccountQuotaConsumption[];
+}
+
+export interface AccountQuotaConsumption {
+  accountId: string;
+  accountLabel: string;
+  consumedPercent: number;
 }
 
 export interface MemberDashboardWallet {

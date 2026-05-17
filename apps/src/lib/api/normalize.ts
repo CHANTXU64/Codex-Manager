@@ -63,7 +63,7 @@ import { readBillingModeLock } from "./billing-mode-lock";
 
 const DEFAULT_BACKGROUND_TASKS: BackgroundTaskSettings = {
   usagePollingEnabled: true,
-  usagePollIntervalSecs: 600,
+  usagePollIntervalSecs: 120,
   gatewayKeepaliveEnabled: true,
   gatewayKeepaliveIntervalSecs: 180,
   tokenRefreshPollingEnabled: true,
