@@ -41,5 +41,4 @@ This document outlines the architectural constraints and coding conventions for 
 - `types/`: Shared TypeScript interfaces.
 
 ## 6. Development Workflow
-- **Validation**: Every significant change must be verified with `pnpm run build:desktop` to ensure static export compatibility.
 - **Sync**: Ensure all new backend commands are added to `lib/api/` with correct underscore/camelCase mapping.
