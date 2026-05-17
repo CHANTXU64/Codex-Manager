@@ -176,6 +176,46 @@ pub async fn service_model_catalog_delete(
     rpc_call_in_background("apikey/modelCatalogDelete", addr, Some(params)).await
 }
 
+#[tauri::command]
+pub async fn service_model_routing(
+    addr: Option<String>,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("apikey/modelRouting", addr, None).await
+}
+
+#[tauri::command]
+pub async fn service_model_source_sync(
+    addr: Option<String>,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("apikey/modelSourceSync", addr, Some(payload)).await
+}
+
+#[tauri::command]
+pub async fn service_model_source_model_save(
+    addr: Option<String>,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("apikey/modelSourceModelSave", addr, Some(payload)).await
+}
+
+#[tauri::command]
+pub async fn service_model_source_mapping_save(
+    addr: Option<String>,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("apikey/modelSourceMappingSave", addr, Some(payload)).await
+}
+
+#[tauri::command]
+pub async fn service_model_source_mapping_delete(
+    addr: Option<String>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let params = serde_json::json!({ "id": id });
+    rpc_call_in_background("apikey/modelSourceMappingDelete", addr, Some(params)).await
+}
+
 /// 函数 `service_apikey_usage_stats`
 ///
 /// 作者: gaohongshun

@@ -31,6 +31,8 @@ pub const APP_SETTING_PLUGIN_MARKET_MODE_KEY: &str = "plugin.market_mode";
 pub const APP_SETTING_PLUGIN_MARKET_SOURCE_URL_KEY: &str = "plugin.market_source_url";
 pub const APP_SETTING_ENV_OVERRIDES_KEY: &str = "app.env_overrides";
 pub const APP_SETTING_WEB_ACCESS_PASSWORD_HASH_KEY: &str = "web.auth.password_hash";
+pub const APP_SETTING_WEB_AUTH_MODE_KEY: &str = "web.auth.mode";
+pub const APP_SETTING_DISTRIBUTION_ENABLED_KEY: &str = "distribution.enabled";
 pub const WEB_ACCESS_SESSION_COOKIE_NAME: &str = "codexmanager_web_auth";
 
 /// 函数 `parse_bool_with_default`

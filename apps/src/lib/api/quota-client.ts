@@ -1,5 +1,7 @@
 import { invoke, withAddr } from "@/lib/api/transport";
 import type {
+  BillingRule,
+  BillingRuleUpsertParams,
   QuotaApiKeyModelUsageItem,
   QuotaApiKeyUsageItem,
   QuotaCapacityConfigResult,
@@ -149,6 +151,28 @@ function normalizeSourceSummary(payload: unknown): QuotaSourceSummary {
     provider: asString(source.provider) || null,
     capturedAt: toNullableNumber(source.capturedAt ?? source.captured_at),
     error: asString(source.error) || null,
+  };
+}
+
+function normalizeBillingRule(payload: unknown): BillingRule {
+  const source = asRecord(payload);
+  return {
+    id: asString(source.id),
+    name: asString(source.name),
+    status: asString(source.status) || "active",
+    priority: toNullableNumber(source.priority) ?? 0,
+    multiplierMillis: toNullableNumber(
+      source.multiplierMillis ?? source.multiplier_millis,
+    ) ?? 1000,
+    modelPattern: asString(source.modelPattern ?? source.model_pattern) || null,
+    serviceTier: asString(source.serviceTier ?? source.service_tier) || null,
+    userId: asString(source.userId ?? source.user_id) || null,
+    projectId: asString(source.projectId ?? source.project_id) || null,
+    apiKeyId: asString(source.apiKeyId ?? source.api_key_id) || null,
+    startsAt: toNullableNumber(source.startsAt ?? source.starts_at),
+    endsAt: toNullableNumber(source.endsAt ?? source.ends_at),
+    createdAt: toNullableNumber(source.createdAt ?? source.created_at) ?? 0,
+    updatedAt: toNullableNumber(source.updatedAt ?? source.updated_at) ?? 0,
   };
 }
 
@@ -438,6 +462,36 @@ export const quotaClient = {
     return normalizeCapacityConfig(
       await invoke<unknown>("service_quota_capacity_config", withAddr()),
     );
+  },
+  async billingRules(): Promise<BillingRule[]> {
+    const result = await invoke<unknown>("service_quota_billing_rules", withAddr());
+    return readItems(result).map(normalizeBillingRule);
+  },
+  async upsertBillingRule(params: BillingRuleUpsertParams): Promise<BillingRule[]> {
+    const result = await invoke<unknown>(
+      "service_quota_billing_rule_upsert",
+      withAddr({
+        id: params.id ?? null,
+        name: params.name,
+        status: params.status ?? "active",
+        priority: params.priority ?? 0,
+        multiplierMillis: params.multiplierMillis,
+        modelPattern: params.modelPattern ?? null,
+        serviceTier: params.serviceTier ?? null,
+        userId: params.userId ?? null,
+        apiKeyId: params.apiKeyId ?? null,
+        startsAt: params.startsAt ?? null,
+        endsAt: params.endsAt ?? null,
+      }),
+    );
+    return readItems(result).map(normalizeBillingRule);
+  },
+  async deleteBillingRule(id: string): Promise<BillingRule[]> {
+    const result = await invoke<unknown>(
+      "service_quota_billing_rule_delete",
+      withAddr({ id }),
+    );
+    return readItems(result).map(normalizeBillingRule);
   },
   async setSourceModels(params: {
     sourceKind: string;

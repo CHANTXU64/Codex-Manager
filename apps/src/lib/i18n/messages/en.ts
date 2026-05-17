@@ -4,6 +4,7 @@ import type { MessageCatalog } from "./types";
 
 export const EN_MESSAGES: MessageCatalog = {
   仪表盘: "Dashboard",
+  号池管理: "Account Pool",
   账号管理: "Accounts",
   聚合API: "Aggregate APIs",
   平台密钥: "API Keys",
@@ -11,6 +12,16 @@ export const EN_MESSAGES: MessageCatalog = {
   请求日志: "Request Logs",
   应用设置: "Settings",
   设置: "Settings",
+  访问控制: "Access Control",
+  退出登录: "Log out",
+  账号系统: "Account system",
+  公开访问: "Public access",
+  保存访问控制: "Save access control",
+  可分发成员: "Billable members",
+  不包含管理员账号: "Excludes administrator accounts",
+  不参与分发: "Not billable",
+  管理员不设置额度: "Admins do not use quota",
+  选择可分发成员: "Select a billable member",
   通用: "General",
   外观: "Appearance",
   网关: "Gateway",
@@ -62,6 +73,7 @@ export const EN_MESSAGES: MessageCatalog = {
   我知道了: "Got it",
   "账号池 · 用量管理": "Account Pool · Usage Management",
   收起侧边栏: "Collapse Sidebar",
+  展开侧边栏: "Expand Sidebar",
   基础设置: "Basic settings",
   控制应用启动和窗口行为: "Control startup and window behavior.",
   自动检查更新: "Check updates automatically",
@@ -90,6 +102,14 @@ export const EN_MESSAGES: MessageCatalog = {
   无法同步核心服务状态: "Unable to sync core service status",
   重试: "Retry",
   强制启动: "Force start",
+  "端口被占用，换一个端口重新启动":
+    "The port is occupied. Choose another port and restart.",
+  新的监听端口: "New listen port",
+  "请输入 1-65535 之间的端口": "Enter a port between 1 and 65535",
+  "启动中...": "Starting...",
+  使用新端口启动: "Start with new port",
+  "保存后会同步更新本地服务地址，CLI 的 base_url 也需要改成同一个端口。":
+    "After saving, the local service address is updated. The CLI base_url must use the same port.",
   "管理上游聚合地址与密钥，并测试连通性":
     "Manage upstream aggregate endpoints and credentials, and test connectivity.",
   查询: "Filter",
@@ -174,6 +194,28 @@ export const EN_MESSAGES: MessageCatalog = {
   从未刷新: "Never refreshed",
   账号类型: "Account type",
   当前状态: "Current status",
+  状态原因: "Status reason",
+  原因码: "Reason code",
+  "Refresh Token 已被重复使用，需要重新登录":
+    "Refresh token was reused; sign in again.",
+  "Refresh Token 已被撤销，需要重新登录":
+    "Refresh token was revoked; sign in again.",
+  "Refresh Token 已过期，需要重新登录":
+    "Refresh token expired; sign in again.",
+  "Refresh Token 授权无效，需要重新登录":
+    "Refresh token grant is invalid; sign in again.",
+  "刷新登录凭证返回 401，需要重新登录":
+    "Refreshing credentials returned 401; sign in again.",
+  "Refresh Token 失效，需要重新登录":
+    "Refresh token is invalid; sign in again.",
+  "用量接口返回 401，账号授权失效":
+    "Usage endpoint returned 401; account authorization is invalid.",
+  "用量接口返回 403，账号权限不足或被限制":
+    "Usage endpoint returned 403; account permission is missing or restricted.",
+  "用量接口返回 HTTP {status}": "Usage endpoint returned HTTP {status}.",
+  账号已停用: "Account deactivated",
+  工作区已停用: "Workspace deactivated",
+  额度已耗尽: "Quota exhausted",
   标签: "Tags",
   未设置: "Not set",
   备注: "Notes",
@@ -292,6 +334,13 @@ export const EN_MESSAGES: MessageCatalog = {
   值越小越靠前: "Smaller values appear first",
   仅修改当前账号: "Only update the current account",
   访问密码: "Access password",
+  当前访问方式: "Current access mode",
+  "统一管理 Web 登录方式、访问密码和团队额度分发。":
+    "Manage Web login mode, access password, and team quota distribution.",
+  "额度分发已开启，平台 Key 会按归属钱包扣减额度。":
+    "Quota distribution is enabled; API keys deduct from the assigned wallet.",
+  "额度分发未开启，平台 Key 不会扣减成员钱包额度。":
+    "Quota distribution is disabled; API keys do not deduct member wallet quota.",
   新密码: "New password",
   确认新密码: "Confirm new password",
   保存: "Save",

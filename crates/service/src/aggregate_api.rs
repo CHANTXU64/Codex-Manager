@@ -1,8 +1,13 @@
 use codexmanager_core::rpc::types::{
     AggregateApiBalanceRefreshResult, AggregateApiBalanceSnapshot, AggregateApiCreateResult,
-    AggregateApiSecretResult, AggregateApiSummary, AggregateApiTestResult,
+    AggregateApiSecretResult, AggregateApiSummary, AggregateApiSupplierModelDeleteParams,
+    AggregateApiSupplierModelEntry, AggregateApiSupplierModelImportParams,
+    AggregateApiSupplierModelImportResult, AggregateApiSupplierModelUpsertParams,
+    AggregateApiTestResult, ManagedModelSourceModelEntry,
 };
-use codexmanager_core::storage::{now_ts, AggregateApi};
+use codexmanager_core::storage::{
+    now_ts, AggregateApi, AggregateApiSupplierModel, ModelSourceModel,
+};
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -26,7 +31,8 @@ const CUSTOM_BALANCE_AUTH_BALANCE_BEARER: &str = "balance_bearer";
 const CUSTOM_BALANCE_AUTH_NONE: &str = "none";
 const CLAUDE_DEFAULT_PROBE_MODEL: &str = "claude-haiku-4-5-20251001";
 const ALIBABA_CODING_PLAN_PROBE_MODEL: &str = "qwen3.5-plus";
-const MAX_DISCOVERED_CLAUDE_PROBE_MODELS: usize = 8;
+const MAX_DISCOVERED_MODEL_IDS: usize = 512;
+const AGGREGATE_API_MODEL_SOURCE_KIND: &str = "aggregate_api";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -409,6 +415,38 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn normalize_required_text(field_name: &str, value: impl AsRef<str>) -> Result<String, String> {
+    let trimmed = value.as_ref().trim();
+    if trimmed.is_empty() {
+        return Err(format!("{field_name} is required"));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_supplier_model_status(value: Option<String>) -> Result<String, String> {
+    let normalized = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("available")
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    match normalized.as_str() {
+        "available" | "active" | "enabled" | "enable" => Ok("available".to_string()),
+        "disabled" | "disable" | "inactive" => Ok("disabled".to_string()),
+        other => Err(format!("unsupported supplier model status: {other}")),
+    }
+}
+
+fn supplier_template_key_for_api(api: &AggregateApi) -> String {
+    api.supplier_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| api.url.trim())
+        .to_string()
+}
+
 fn normalize_auth_params_json(
     auth_type: &str,
     enabled: Option<bool>,
@@ -662,6 +700,20 @@ mod tests {
                 "provider-model-c".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn extract_model_ids_from_models_response_keeps_full_provider_catalog() {
+        let mut data = (0..13)
+            .map(|index| serde_json::json!({ "id": format!("provider-model-{index}") }))
+            .collect::<Vec<Value>>();
+        data.push(serde_json::json!({ "id": "gpt-5.5" }));
+        let body = serde_json::json!({ "data": data }).to_string();
+
+        let models = extract_model_ids_from_models_response(body.as_str());
+
+        assert!(models.contains(&"gpt-5.5".to_string()));
+        assert_eq!(models.len(), 14);
     }
 
     #[test]
@@ -1873,7 +1925,7 @@ fn extract_model_ids_from_models_response(body: &str) -> Vec<String> {
     };
     let mut models = Vec::new();
     for item in items {
-        if models.len() >= MAX_DISCOVERED_CLAUDE_PROBE_MODELS {
+        if models.len() >= MAX_DISCOVERED_MODEL_IDS {
             break;
         }
         if let Some(model) = model_id_from_value(item) {
@@ -2024,6 +2076,36 @@ fn probe_codex_models_endpoint(
     }
     read_first_chunk(response)?;
     Ok(status_code)
+}
+
+fn discover_codex_models_endpoint(
+    client: &reqwest::blocking::Client,
+    api: &AggregateApi,
+    secret: &str,
+) -> Result<Vec<String>, String> {
+    let url = build_codex_models_probe_url(api);
+    let builder = client.get(url.as_str());
+    let (builder, updated_url) = apply_probe_auth(builder, url.clone(), api, secret)?;
+    let builder = if updated_url != url {
+        let rebuilt = client.get(updated_url.as_str());
+        let (rebuilt, _) = apply_probe_auth(rebuilt, updated_url, api, secret)?;
+        rebuilt
+    } else {
+        builder
+    };
+    let response = add_codex_probe_headers(builder)?
+        .send()
+        .map_err(|err| err.to_string())?;
+    let status_code = response.status().as_u16();
+    if !response.status().is_success() {
+        return Err(format!("codex models discovery http_status={status_code}"));
+    }
+    let body = response.text().map_err(|err| err.to_string())?;
+    let models = extract_model_ids_from_models_response(body.as_str());
+    if models.is_empty() {
+        return Err("codex models discovery returned empty model list".to_string());
+    }
+    Ok(models)
 }
 
 /// 函数 `probe_codex_responses_endpoint`
@@ -2323,6 +2405,152 @@ pub(crate) fn list_aggregate_apis() -> Result<Vec<AggregateApiSummary>, String> 
             last_balance_json: item.last_balance_json,
         })
         .collect())
+}
+
+pub(crate) fn list_aggregate_api_supplier_models(
+    supplier_key: Option<String>,
+    provider_type: Option<String>,
+) -> Result<Vec<AggregateApiSupplierModelEntry>, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let supplier_key = supplier_key.and_then(|value| normalize_optional_text(Some(value)));
+    let provider_type = provider_type
+        .map(|value| normalize_provider_type(Some(value)))
+        .transpose()?
+        .and_then(|value| normalize_optional_text(Some(value)));
+    storage
+        .list_aggregate_api_supplier_models(supplier_key.as_deref(), provider_type.as_deref())
+        .map_err(|err| format!("list supplier models failed: {err}"))
+        .map(|items| items.into_iter().map(supplier_model_entry).collect())
+}
+
+pub(crate) fn save_aggregate_api_supplier_model(
+    params: AggregateApiSupplierModelUpsertParams,
+) -> Result<AggregateApiSupplierModelEntry, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let supplier_key = normalize_required_text("supplierKey", params.supplier_key)?;
+    let provider_type = normalize_provider_type(Some(params.provider_type))?;
+    let upstream_model = normalize_required_text("upstreamModel", params.upstream_model)?;
+    let now = now_ts();
+    let model = AggregateApiSupplierModel {
+        supplier_key,
+        provider_type,
+        upstream_model,
+        display_name: params
+            .display_name
+            .and_then(|value| normalize_optional_text(Some(value))),
+        status: normalize_supplier_model_status(params.status)?,
+        created_at: now,
+        updated_at: now,
+    };
+    storage
+        .upsert_aggregate_api_supplier_model(&model)
+        .map_err(|err| format!("save supplier model failed: {err}"))?;
+    Ok(supplier_model_entry(model))
+}
+
+pub(crate) fn delete_aggregate_api_supplier_model(
+    params: AggregateApiSupplierModelDeleteParams,
+) -> Result<(), String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let supplier_key = normalize_required_text("supplierKey", params.supplier_key)?;
+    let provider_type = normalize_provider_type(Some(params.provider_type))?;
+    let upstream_model = normalize_required_text("upstreamModel", params.upstream_model)?;
+    storage
+        .delete_aggregate_api_supplier_model(
+            supplier_key.as_str(),
+            provider_type.as_str(),
+            upstream_model.as_str(),
+        )
+        .map_err(|err| format!("delete supplier model failed: {err}"))
+}
+
+pub(crate) fn import_aggregate_api_supplier_models(
+    params: AggregateApiSupplierModelImportParams,
+) -> Result<AggregateApiSupplierModelImportResult, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let api_id = normalize_required_text("apiId", params.api_id)?;
+    let api = storage
+        .find_aggregate_api_by_id(api_id.as_str())
+        .map_err(|err| format!("read aggregate api failed: {err}"))?
+        .ok_or_else(|| "aggregate api not found".to_string())?;
+    let supplier_key = params
+        .supplier_key
+        .and_then(|value| normalize_optional_text(Some(value)))
+        .unwrap_or_else(|| supplier_template_key_for_api(&api));
+    let provider_type = params
+        .provider_type
+        .map(|value| normalize_provider_type(Some(value)))
+        .transpose()?
+        .unwrap_or_else(|| normalize_provider_type_value(api.provider_type.as_str()));
+    let templates = storage
+        .list_aggregate_api_supplier_models(
+            Some(supplier_key.as_str()),
+            Some(provider_type.as_str()),
+        )
+        .map_err(|err| format!("list supplier models failed: {err}"))?;
+    let mut imported = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let now = now_ts();
+    for template in templates {
+        if template.status != "available" {
+            continue;
+        }
+        if !seen.insert(template.upstream_model.clone()) {
+            continue;
+        }
+        let record = ModelSourceModel {
+            source_kind: AGGREGATE_API_MODEL_SOURCE_KIND.to_string(),
+            source_id: api.id.clone(),
+            upstream_model: template.upstream_model,
+            display_name: template.display_name,
+            status: "available".to_string(),
+            discovery_kind: "template".to_string(),
+            last_synced_at: Some(now),
+            extra_json: "{}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        storage
+            .upsert_model_source_model(&record)
+            .map_err(|err| format!("import supplier model failed: {err}"))?;
+        imported.push(source_model_entry(record));
+    }
+    if !imported.is_empty() {
+        crate::apikey_models::auto_associate_aggregate_api_source_models(
+            &storage,
+            api.id.as_str(),
+        )?;
+    }
+    Ok(AggregateApiSupplierModelImportResult {
+        imported: imported.len(),
+        items: imported,
+    })
+}
+
+fn supplier_model_entry(model: AggregateApiSupplierModel) -> AggregateApiSupplierModelEntry {
+    AggregateApiSupplierModelEntry {
+        supplier_key: model.supplier_key,
+        provider_type: model.provider_type,
+        upstream_model: model.upstream_model,
+        display_name: model.display_name,
+        status: model.status,
+        created_at: model.created_at,
+        updated_at: model.updated_at,
+    }
+}
+
+fn source_model_entry(model: ModelSourceModel) -> ManagedModelSourceModelEntry {
+    ManagedModelSourceModelEntry {
+        source_kind: model.source_kind,
+        source_id: model.source_id,
+        upstream_model: model.upstream_model,
+        display_name: model.display_name,
+        status: model.status,
+        discovery_kind: model.discovery_kind,
+        last_synced_at: model.last_synced_at,
+        created_at: model.created_at,
+        updated_at: model.updated_at,
+    }
 }
 
 /// 函数 `create_aggregate_api`
@@ -2826,6 +3054,49 @@ pub(crate) fn test_aggregate_api_connection(
         tested_at: now_ts(),
         latency_ms: started_at.elapsed().as_millis() as i64,
     })
+}
+
+pub(crate) fn discover_aggregate_api_models(api_id: &str) -> Result<Vec<String>, String> {
+    if api_id.trim().is_empty() {
+        return Err("aggregate api id required".to_string());
+    }
+    let storage = open_storage().ok_or_else(|| "storage unavailable".to_string())?;
+    let api = storage
+        .find_aggregate_api_by_id(api_id)
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "aggregate api not found".to_string())?;
+    let secret = storage
+        .find_aggregate_api_secret_by_id(api_id)
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "aggregate api secret not found".to_string())?;
+    if let Some(model_override) = api
+        .model_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(vec![model_override.to_string()]);
+    }
+
+    let client = gateway::fresh_upstream_client();
+    let provider_type = normalize_provider_type_value(api.provider_type.as_str());
+    match provider_type.as_str() {
+        AGGREGATE_API_PROVIDER_CLAUDE => {
+            let (models, discovery_error) = claude_probe_models_for_api(&client, &api, &secret);
+            if models.is_empty() {
+                Err(discovery_error.unwrap_or_else(|| {
+                    "claude models discovery returned empty model list".to_string()
+                }))
+            } else {
+                Ok(models)
+            }
+        }
+        AGGREGATE_API_PROVIDER_GEMINI => Err(
+            "gemini aggregate api does not expose a generic model list; add source models manually"
+                .to_string(),
+        ),
+        _ => discover_codex_models_endpoint(&client, &api, &secret),
+    }
 }
 
 pub(crate) fn refresh_aggregate_api_balance(

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -10,6 +11,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+} from "@/components/ui/table";
 import { appClient } from "@/lib/api/app-client";
 import { useI18n } from "@/lib/i18n/provider";
 import {
@@ -55,16 +62,16 @@ function PartnerTable({
   emptyVisualLabel: string;
 }) {
   return (
-    <div className="overflow-x-auto rounded-3xl border border-border/50 bg-background/40">
-      <table className="min-w-full border-collapse">
-        <tbody>
+    <div className="overflow-x-auto rounded-xl border border-border/50 bg-background/40">
+      <Table className="min-w-full">
+        <TableBody>
           {items.map((item, index) => (
-            <tr
+            <TableRow
               key={item.key}
-              className={index === 0 ? "" : "border-t border-border/50"}
+              className={index === 0 ? "border-b-0" : ""}
             >
-              <td className="w-[180px] p-5 align-middle">
-                <div className="flex items-center justify-center rounded-3xl border border-border/50 bg-white/95 p-4">
+              <TableCell className="w-[180px] p-5 align-middle">
+                <div className="flex items-center justify-center rounded-xl border border-border/50 bg-white/95 p-4">
                   {item.imageSrc ? (
                     <img
                       src={item.imageSrc}
@@ -72,15 +79,15 @@ function PartnerTable({
                       className="max-h-20 w-auto object-contain"
                     />
                   ) : (
-                    <div className="flex h-20 w-full max-w-[180px] items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 via-background to-primary/5 px-4 text-center">
+                    <div className="flex h-20 w-full max-w-[180px] items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 via-background to-primary/5 px-4 text-center">
                       <span className="text-lg font-semibold tracking-tight text-foreground">
                         {translate(emptyVisualLabel)}
                       </span>
                     </div>
                   )}
                 </div>
-              </td>
-              <td className="p-5 align-middle">
+              </TableCell>
+              <TableCell className="p-5 align-middle">
                 <div className="space-y-3">
                   <div className="space-y-1">
                     <h3 className="text-base font-semibold text-foreground">
@@ -91,23 +98,24 @@ function PartnerTable({
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
                       onClick={() => {
                         void onOpenLink(item.href);
                       }}
-                      className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-all duration-200 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      className="rounded-full"
                     >
                       {translate(item.actionLabel)}
-                      <ExternalLink className="h-4 w-4" />
-                    </button>
+                      <ExternalLink data-icon="inline-end" />
+                    </Button>
                   </div>
                 </div>
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -188,7 +196,7 @@ export default function AuthorPage() {
       </div>
 
       <Tabs defaultValue="sponsor">
-        <TabsList className="glass-card flex h-11 w-full justify-start overflow-x-auto rounded-xl border-none p-1 no-scrollbar lg:w-fit">
+        <TabsList className="glass-card flex h-11 w-full justify-start overflow-x-auto rounded-xl p-1 no-scrollbar lg:w-fit">
           <TabsTrigger value="sponsor" className="gap-2 px-5 shrink-0">
             {t("赞助 / 推荐")}
           </TabsTrigger>
@@ -199,7 +207,7 @@ export default function AuthorPage() {
 
         <TabsContent value="sponsor" className="space-y-6">
           {visibleSponsors.length > 0 ? (
-            <Card className="glass-card border-none shadow-md">
+            <Card className="glass-card shadow-sm">
               <CardHeader className="gap-3">
                 <div className="flex items-center gap-2">
                   <HeartHandshake className="h-4 w-4 text-primary" />
@@ -221,7 +229,7 @@ export default function AuthorPage() {
           ) : null}
 
           {visibleServerRecommendations.length > 0 ? (
-            <Card className="glass-card border-none shadow-md">
+            <Card className="glass-card shadow-sm">
               <CardHeader className="gap-3">
                 <div className="flex items-center gap-2">
                   <Server className="h-4 w-4 text-primary" />
@@ -256,7 +264,7 @@ export default function AuthorPage() {
             </h3>
           </div>
 
-          <Card className="glass-card border-none shadow-md">
+          <Card className="glass-card shadow-sm">
             <CardHeader className="gap-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -270,7 +278,7 @@ export default function AuthorPage() {
               {AUTHOR_SUPPORT_IMAGES.map((item) => (
                 <div
                   key={item.key}
-                  className="rounded-3xl border border-border/50 bg-background/40 p-5"
+                  className="rounded-xl border border-border/50 bg-background/40 p-5"
                 >
                   <div className="space-y-1">
                     <h3 className="text-sm font-semibold text-foreground">
@@ -280,11 +288,11 @@ export default function AuthorPage() {
                       {t(item.description)}
                     </p>
                   </div>
-                  <div className="mt-4 overflow-hidden rounded-3xl border border-border/50 bg-white p-3">
+                  <div className="mt-4 overflow-hidden rounded-xl border border-border/50 bg-white p-3">
                     <img
                       src={item.src}
                       alt={item.title}
-                      className="mx-auto aspect-square w-full max-w-[220px] rounded-2xl object-cover"
+                      className="mx-auto aspect-square w-full max-w-[220px] rounded-xl object-cover"
                     />
                   </div>
                 </div>
@@ -292,7 +300,7 @@ export default function AuthorPage() {
             </CardContent>
           </Card>
 
-          <Card className="glass-card border-none shadow-md">
+          <Card className="glass-card shadow-sm">
             <CardHeader className="gap-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
@@ -306,7 +314,7 @@ export default function AuthorPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-3xl border border-border/50 bg-background/40 p-5">
+              <div className="rounded-xl border border-border/50 bg-background/40 p-5">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   {t("微信")}
                 </p>
@@ -316,29 +324,30 @@ export default function AuthorPage() {
                 <p className="mt-3 text-xs leading-6 text-muted-foreground">
                   {t("扫码可直接添加作者微信，也可以手动搜索上面的微信号。")}
                 </p>
-                <div className="mt-4 overflow-hidden rounded-3xl border border-border/50 bg-white p-3">
+                <div className="mt-4 overflow-hidden rounded-xl border border-border/50 bg-white p-3">
                   <img
                     src="/author-wechat.jpg"
                     alt="作者微信二维码"
-                    className="mx-auto aspect-square w-full max-w-[180px] rounded-2xl object-cover"
+                    className="mx-auto aspect-square w-full max-w-[180px] rounded-xl object-cover"
                   />
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-border/50 bg-background/40 p-5">
+              <div className="rounded-xl border border-border/50 bg-background/40 p-5">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   Telegram
                 </p>
-                <button
+                <Button
                   type="button"
+                  variant="link"
                   onClick={() => {
                     void handleOpenLink(AUTHOR_TELEGRAM_GROUP_URL);
                   }}
-                  className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-primary transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  className="mt-3 h-auto p-0 font-semibold"
                 >
                   {t("加入 TG 群聊")}
-                  <ExternalLink className="h-4 w-4" />
-                </button>
+                  <ExternalLink data-icon="inline-end" />
+                </Button>
                 <p className="mt-3 text-xs leading-6 text-muted-foreground">
                   {t("README 里维护的官方群链接，打开后即可加入讨论。")}
                 </p>

@@ -37,6 +37,12 @@ export interface AppSettings {
   lightweightModeOnCloseToTray: boolean;
   codexCliGuideDismissed: boolean;
   webAccessPasswordConfigured: boolean;
+  webAuthMode: string;
+  webAuthModeOptions: string[];
+  distributionEnabled: boolean;
+  billingModeLock: BillingModeLock;
+  appUsersConfigured: boolean;
+  appUserCount: number;
   locale: string;
   localeOptions: string[];
   serviceAddr: string;
@@ -72,9 +78,75 @@ export interface AppSettings {
   [key: string]: unknown;
 }
 
+export interface BillingModeLock {
+  accountModeLocked: boolean;
+  distributionLocked: boolean;
+  reasons: string[];
+}
+
 export interface CodexLatestVersionInfo {
   packageName: string;
   version: string;
   distTag: string;
   registryUrl: string;
+}
+
+export interface AccountManagerStatus {
+  mode: string;
+  modeOptions: string[];
+  passwordConfigured: boolean;
+  appUsersConfigured: boolean;
+  appUserCount: number;
+  activeAdminCount: number;
+  distributionEnabled: boolean;
+  billingModeLock: BillingModeLock;
+}
+
+export interface AppWallet {
+  id: string;
+  ownerKind: string;
+  ownerId: string;
+  balanceCreditMicros: number;
+  frozenCreditMicros: number;
+  availableCreditMicros: number;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AppUser {
+  id: string;
+  username: string;
+  displayName?: string | null;
+  role: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  lastLoginAt?: number | null;
+  wallet?: AppWallet | null;
+}
+
+export interface ApiKeyOwner {
+  keyId: string;
+  ownerKind: string;
+  ownerUserId?: string | null;
+  projectId?: string | null;
+  updatedAt: number;
+}
+
+export type AppRole = "system_admin" | "admin" | "member";
+export type AppPermission =
+  | "system:admin"
+  | "apikey:self"
+  | "requestlog:self"
+  | "models:read"
+  | "profile:self";
+
+export interface AppSessionResult {
+  mode: string;
+  currentUser?: AppUser | null;
+  role: AppRole;
+  permissions: AppPermission[];
+  distributionEnabled: boolean;
+  billingModeLock: BillingModeLock;
 }

@@ -1,6 +1,8 @@
 use codexmanager_core::rpc::types::ApiKeySummary;
+use std::collections::HashSet;
 
 use crate::storage_helpers::open_storage;
+use crate::RpcActor;
 
 /// 函数 `read_api_keys`
 ///
@@ -44,5 +46,23 @@ pub(crate) fn read_api_keys() -> Result<Vec<ApiKeySummary>, String> {
             created_at: key.created_at,
             last_used_at: key.last_used_at,
         })
+        .collect())
+}
+
+pub(crate) fn read_api_keys_for_actor(actor: &RpcActor) -> Result<Vec<ApiKeySummary>, String> {
+    let items = read_api_keys()?;
+    if actor.is_admin() {
+        return Ok(items);
+    }
+    let user_id = actor
+        .user_id
+        .as_deref()
+        .ok_or_else(|| "permission_denied: apikey requires user session".to_string())?;
+    let owned_key_ids = crate::list_api_key_ids_for_user(user_id)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    Ok(items
+        .into_iter()
+        .filter(|item| owned_key_ids.contains(&item.id))
         .collect())
 }

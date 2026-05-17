@@ -33,6 +33,37 @@ export interface QuotaOverviewResult {
   };
 }
 
+export interface BillingRule {
+  id: string;
+  name: string;
+  status: "active" | "disabled" | string;
+  priority: number;
+  multiplierMillis: number;
+  modelPattern: string | null;
+  serviceTier: string | null;
+  userId: string | null;
+  projectId: string | null;
+  apiKeyId: string | null;
+  startsAt: number | null;
+  endsAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BillingRuleUpsertParams {
+  id?: string | null;
+  name: string;
+  status?: "active" | "disabled" | string | null;
+  priority?: number | null;
+  multiplierMillis: number;
+  modelPattern?: string | null;
+  serviceTier?: string | null;
+  userId?: string | null;
+  apiKeyId?: string | null;
+  startsAt?: number | null;
+  endsAt?: number | null;
+}
+
 export interface QuotaModelUsageItem {
   model: string;
   provider: string | null;

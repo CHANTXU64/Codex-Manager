@@ -139,6 +139,13 @@ fn rewrite_body_model_override(body: &Bytes, model_override: Option<&str>) -> By
         .unwrap_or_else(|_| body.clone())
 }
 
+fn aggregate_upstream_model_for_log<'a>(
+    candidate: &'a AggregateApi,
+    platform_model: Option<&'a str>,
+) -> Option<&'a str> {
+    candidate.model_override.as_deref().or(platform_model)
+}
+
 fn replace_query_param(mut url: reqwest::Url, name: &str, value: &str) -> reqwest::Url {
     let name_trimmed = name.trim();
     if name_trimmed.is_empty() {
@@ -778,6 +785,8 @@ pub(in super::super) fn proxy_aggregate_request(
     let mut request = Some(request);
     let mut attempted_aggregate_api_ids = Vec::new();
     let mut last_attempt_url: Option<String> = None;
+    let mut last_attempt_id: Option<String> = None;
+    let mut last_attempt_upstream_model: Option<String> = None;
     let mut last_attempt_supplier_name: Option<String> = None;
     let mut last_attempt_error: Option<String> = None;
     let mut last_failure_status = 502u16;
@@ -785,8 +794,13 @@ pub(in super::super) fn proxy_aggregate_request(
     let total_candidates = aggregate_api_candidates.len();
     for (candidate_idx, candidate) in aggregate_api_candidates.into_iter().enumerate() {
         attempted_aggregate_api_ids.push(candidate.id.clone());
+        let candidate_id = candidate.id.clone();
+        let candidate_upstream_model =
+            aggregate_upstream_model_for_log(&candidate, model_for_log).map(str::to_string);
         let candidate_supplier_name = candidate.supplier_name.clone();
         let candidate_url = candidate.url.clone();
+        last_attempt_id = Some(candidate_id.clone());
+        last_attempt_upstream_model = candidate_upstream_model.clone();
         let Some(secret) = storage
             .find_aggregate_api_secret_by_id(candidate.id.as_str())
             .map_err(|err| err.to_string())?
@@ -841,6 +855,9 @@ pub(in super::super) fn proxy_aggregate_request(
                         aggregate_api_supplier_name: candidate_supplier_name.as_deref(),
                         aggregate_api_url: Some(candidate_url.as_str()),
                         attempted_aggregate_api_ids: Some(attempted_aggregate_api_ids.as_slice()),
+                        upstream_model: candidate_upstream_model.as_deref(),
+                        actual_source_kind: Some("aggregate_api"),
+                        actual_source_id: Some(candidate_id.as_str()),
                         ..Default::default()
                     },
                     Some(key_id),
@@ -1055,6 +1072,9 @@ pub(in super::super) fn proxy_aggregate_request(
                     aggregate_api_supplier_name: candidate_supplier_name.as_deref(),
                     aggregate_api_url: Some(candidate_url.as_str()),
                     attempted_aggregate_api_ids: Some(attempted_aggregate_api_ids.as_slice()),
+                    upstream_model: candidate_upstream_model.as_deref(),
+                    actual_source_kind: Some("aggregate_api"),
+                    actual_source_id: Some(candidate_id.as_str()),
                     ..Default::default()
                 },
                 Some(key_id),
@@ -1115,6 +1135,9 @@ pub(in super::super) fn proxy_aggregate_request(
             aggregate_api_supplier_name: last_attempt_supplier_name.as_deref(),
             aggregate_api_url: last_attempt_url.as_deref(),
             attempted_aggregate_api_ids: Some(attempted_aggregate_api_ids.as_slice()),
+            upstream_model: last_attempt_upstream_model.as_deref(),
+            actual_source_kind: last_attempt_id.as_deref().map(|_| "aggregate_api"),
+            actual_source_id: last_attempt_id.as_deref(),
             ..Default::default()
         },
         Some(key_id),

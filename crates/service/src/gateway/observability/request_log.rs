@@ -23,6 +23,9 @@ pub(crate) struct RequestLogTraceContext<'a> {
     pub aggregate_api_supplier_name: Option<&'a str>,
     pub aggregate_api_url: Option<&'a str>,
     pub attempted_aggregate_api_ids: Option<&'a [String]>,
+    pub upstream_model: Option<&'a str>,
+    pub actual_source_kind: Option<&'a str>,
+    pub actual_source_id: Option<&'a str>,
 }
 
 #[allow(dead_code)]
@@ -254,6 +257,39 @@ fn should_write_gateway_error_fallback(status_code: Option<u16>, error: Option<&
         || normalized.contains("usage_limit_reached")
 }
 
+fn normalize_log_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn resolve_route_details(
+    storage: &Storage,
+    trace_context: &RequestLogTraceContext<'_>,
+    account_id: Option<&str>,
+    model: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let actual_source_kind = normalize_log_text(trace_context.actual_source_kind).or_else(|| {
+        account_id
+            .and_then(|value| normalize_log_text(Some(value)))
+            .map(|_| "openai_account".to_string())
+    });
+    let actual_source_id = normalize_log_text(trace_context.actual_source_id)
+        .or_else(|| normalize_log_text(account_id));
+    let upstream_model = normalize_log_text(trace_context.upstream_model).or_else(|| {
+        let platform_model = model.map(str::trim).filter(|value| !value.is_empty())?;
+        let source_kind = actual_source_kind.as_deref()?;
+        let source_id = actual_source_id.as_deref()?;
+        storage
+            .find_enabled_model_source_mapping(platform_model, source_kind, source_id)
+            .ok()
+            .flatten()
+            .map(|mapping| mapping.upstream_model)
+    });
+    (upstream_model, actual_source_kind, actual_source_id)
+}
+
 /// 函数 `response_adapter_label`
 ///
 /// 作者: gaohongshun
@@ -270,6 +306,7 @@ fn response_adapter_label(value: super::ResponseAdapter) -> &'static str {
         super::ResponseAdapter::Passthrough => "Passthrough",
         super::ResponseAdapter::AnthropicMessagesFromResponses => "AnthropicMessagesFromResponses",
         super::ResponseAdapter::ChatCompletionsFromResponses => "ChatCompletionsFromResponses",
+        super::ResponseAdapter::CompactFromChatCompletions => "CompactFromChatCompletions",
         super::ResponseAdapter::ImagesB64JsonFromResponses => "ImagesB64JsonFromResponses",
         super::ResponseAdapter::ImagesUrlFromResponses => "ImagesUrlFromResponses",
         super::ResponseAdapter::GeminiJson => "GeminiJson",
@@ -395,6 +432,8 @@ pub(crate) fn write_request_log_with_attempts(
         .effective_service_tier
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let (upstream_model, actual_source_kind, actual_source_id) =
+        resolve_route_details(storage, &trace_context, account_id, model);
     super::trace_log::log_failed_request(super::trace_log::FailedRequestLog {
         ts: created_at,
         trace_id: trace_context.trace_id,
@@ -457,6 +496,9 @@ pub(crate) fn write_request_log_with_attempts(
             transparent_mode: None,
             enhanced_mode: None,
             model: model.map(|v| v.to_string()),
+            upstream_model,
+            actual_source_kind,
+            actual_source_id,
             reasoning_effort: reasoning_effort.map(|v| v.to_string()),
             service_tier: service_tier.map(str::to_string),
             effective_service_tier: effective_service_tier.map(str::to_string),
@@ -520,6 +562,46 @@ pub(crate) fn write_request_log_with_attempts(
             status_code.unwrap_or(0),
             account_id.unwrap_or("-"),
             key_id.unwrap_or("-"),
+            request_log_id,
+            err_text
+        );
+    }
+
+    if success {
+        let raw_usage_json = serde_json::to_string(&serde_json::json!({
+            "model": model,
+            "inputTokens": input_tokens,
+            "cachedInputTokens": cached_input_tokens,
+            "outputTokens": output_tokens,
+            "totalTokens": total_tokens,
+            "reasoningOutputTokens": reasoning_output_tokens,
+            "estimatedCostUsd": estimated_cost_usd,
+        }))
+        .ok();
+        if let Err(err) = crate::wallet_charge_for_request(
+            storage,
+            key_id,
+            request_log_id,
+            estimated_cost_usd,
+            model,
+            effective_service_tier.or(service_tier),
+            raw_usage_json,
+        ) {
+            log::warn!(
+                "event=app_wallet_charge_failed key_id={} request_log_id={} estimated_cost_usd={} err={}",
+                key_id.unwrap_or("-"),
+                request_log_id,
+                estimated_cost_usd,
+                err
+            );
+        }
+    }
+
+    if let Err(err) = storage.maybe_run_observability_maintenance(created_at) {
+        let err_text = err.to_string();
+        super::metrics::record_db_error(err_text.as_str());
+        log::warn!(
+            "event=gateway_observability_maintenance_failed request_log_id={} err={}",
             request_log_id,
             err_text
         );

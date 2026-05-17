@@ -16,6 +16,7 @@ import {
 import { appClient } from "@/lib/api/app-client";
 import { loadRuntimeCapabilities } from "@/lib/api/transport";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { CodexCliOnboardingDialog } from "@/components/layout/codex-cli-onboarding-dialog";
 import { applyAppearancePreset } from "@/lib/appearance";
 import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
@@ -23,6 +24,7 @@ import { useLocalDayRange } from "@/hooks/useLocalDayRange";
 import { isTrayPreviewPath } from "@/components/layout/app-frame";
 import {
   formatServiceError,
+  isServicePortConflictError,
   isExpectedInitializeResult,
   normalizeServiceAddr,
 } from "@/lib/utils/service";
@@ -83,6 +85,20 @@ function writeCodexCliGuideSessionDismissed(dismissed: boolean) {
  */
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+function readPortFromServiceAddr(addr: string): string {
+  const normalized = normalizeServiceAddr(addr || DEFAULT_SERVICE_ADDR);
+  return normalized.split(":").pop() || "48760";
+}
+
+function isValidServicePort(value: string): boolean {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return false;
+  }
+  const port = Number.parseInt(trimmed, 10);
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
 /**
  * 函数 `AppBootstrap`
  *
@@ -122,6 +138,10 @@ export function AppBootstrap({ children }: { children: React.ReactNode }) {
   const serviceStatusRef = useRef(serviceStatus);
   const runtimeCapabilitiesRef = useRef(runtimeCapabilities);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryPort, setRecoveryPort] = useState(() =>
+    readPortFromServiceAddr(DEFAULT_SERVICE_ADDR),
+  );
+  const [isRecoveringPort, setIsRecoveringPort] = useState(false);
   const [guideSessionDismissed, setGuideSessionDismissedState] = useState(
     readCodexCliGuideSessionDismissed
   );
@@ -278,6 +298,7 @@ export function AppBootstrap({ children }: { children: React.ReactNode }) {
 
       const settings = await appClient.getSettings();
       const addr = normalizeServiceAddr(settings.serviceAddr || DEFAULT_SERVICE_ADDR);
+      setRecoveryPort(readPortFromServiceAddr(addr));
       const currentServiceStatus = serviceStatusRef.current;
       
       const currentAppliedTheme = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : null;
@@ -385,6 +406,52 @@ export function AppBootstrap({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleRecoverWithPort = async () => {
+    if (!supportsLocalServiceStart) {
+      return;
+    }
+    const nextPort = recoveryPort.trim();
+    if (!isValidServicePort(nextPort)) {
+      toast.error(t("请输入 1-65535 之间的端口"));
+      return;
+    }
+
+    const nextAddr = normalizeServiceAddr(`localhost:${nextPort}`);
+    setIsRecoveringPort(true);
+    setIsInitializing(true);
+    setError(null);
+    try {
+      const settings = await appClient.setSettings({ serviceAddr: nextAddr });
+      const currentAppliedTheme =
+        typeof document !== "undefined"
+          ? document.documentElement.getAttribute("data-theme")
+          : null;
+      if (settings.theme && settings.theme !== currentAppliedTheme) {
+        setTheme(settings.theme);
+      }
+      applyAppearancePreset(settings.appearancePreset);
+      setAppSettings(settings);
+      setServiceStatus({ addr: nextAddr, connected: false, version: "" });
+      await startAndInitializeService(nextAddr);
+      await applyConnectedServiceState(
+        nextAddr,
+        "",
+        settings.lowTransparency,
+        {
+          blockOnDashboardSnapshot:
+            shouldBlockOnInitialDashboardSnapshot(true),
+        },
+      );
+      toast.success(t("服务已连接"));
+    } catch (recoverError: unknown) {
+      setServiceStatus({ addr: nextAddr, connected: false, version: "" });
+      setError(formatServiceError(recoverError));
+      setIsInitializing(false);
+    } finally {
+      setIsRecoveringPort(false);
+    }
+  };
+
   const handleGuideOpenChange = useCallback((open: boolean) => {
     if (open) {
       return;
@@ -462,6 +529,11 @@ export function AppBootstrap({ children }: { children: React.ReactNode }) {
 
   const showLoading = isInitializing && !hasInitializedOnce.current;
   const showError = !!error && !hasInitializedOnce.current;
+  const showPortRecovery =
+    showError &&
+    supportsLocalServiceStart &&
+    !isUnsupportedWebRuntime &&
+    isServicePortConflictError(error);
   const showCodexGuide =
     !isTrayPreview &&
     (isCodexCliGuideOpen ||
@@ -484,7 +556,7 @@ export function AppBootstrap({ children }: { children: React.ReactNode }) {
 
       {!isTrayPreview && (showLoading || showError) && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
-          <div className="flex w-full max-w-md flex-col items-center gap-6 rounded-3xl glass-card p-10 shadow-2xl animate-in fade-in zoom-in duration-500">
+          <div className="flex w-full max-w-md flex-col items-center gap-6 rounded-xl glass-card p-10 shadow-sm animate-in fade-in zoom-in duration-500">
             {showLoading ? (
               <>
                 <div className="h-14 w-14 animate-spin rounded-full border-4 border-primary border-t-transparent" />
@@ -517,6 +589,39 @@ export function AppBootstrap({ children }: { children: React.ReactNode }) {
                     {error}
                   </p>
                 </div>
+                {showPortRecovery ? (
+                  <div className="w-full rounded-xl border border-border/70 bg-muted/30 p-3">
+                    <div className="mb-2 text-left text-sm font-medium">
+                      {t("端口被占用，换一个端口重新启动")}
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        value={recoveryPort}
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        aria-label={t("新的监听端口")}
+                        onChange={(event) => setRecoveryPort(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            void handleRecoverWithPort();
+                          }
+                        }}
+                        className="h-10"
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => void handleRecoverWithPort()}
+                        disabled={isRecoveringPort}
+                        className="h-10 shrink-0"
+                      >
+                        {isRecoveringPort ? t("启动中...") : t("使用新端口启动")}
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-left text-xs text-muted-foreground">
+                      {t("保存后会同步更新本地服务地址，CLI 的 base_url 也需要改成同一个端口。")}
+                    </p>
+                  </div>
+                ) : null}
                 <div
                   className={`grid w-full gap-3 ${supportsLocalServiceStart ? "grid-cols-2" : "grid-cols-1"}`}
                 >

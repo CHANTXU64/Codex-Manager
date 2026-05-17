@@ -2805,3 +2805,221 @@ fn rpc_accepts_loopback_origin() {
     );
     assert_eq!(status, 200, "unexpected status {status}: {body}");
 }
+
+#[test]
+fn rpc_account_manager_assigns_key_and_bills_wallet() {
+    let ctx = RpcTestContext::new("rpc-account-manager-billing");
+
+    let call_rpc_response =
+        |id: i64, method: &str, params: Option<serde_json::Value>| -> serde_json::Value {
+            let server = codexmanager_service::start_one_shot_server().expect("start server");
+            let req = JsonRpcRequest {
+                id: id.into(),
+                method: method.to_string(),
+                params,
+                trace: None,
+            };
+            let json = serde_json::to_string(&req).expect("serialize");
+            post_rpc(&server.addr, &json)
+        };
+    let call_rpc =
+        |id: i64, method: &str, params: Option<serde_json::Value>| -> serde_json::Value {
+            call_rpc_response(id, method, params)
+                .get("result")
+                .cloned()
+                .expect("result")
+        };
+
+    let settings = call_rpc(
+        200,
+        "appSettings/set",
+        Some(serde_json::json!({
+            "webAuthMode": "accounts",
+            "distributionEnabled": true
+        })),
+    );
+    assert_eq!(settings["webAuthMode"], "accounts");
+    assert_eq!(settings["distributionEnabled"], true);
+
+    let user = call_rpc(
+        201,
+        "accountManager/users/create",
+        Some(serde_json::json!({
+            "username": "member-one",
+            "password": "password123",
+            "displayName": "Member One",
+            "role": "member"
+        })),
+    );
+    let user_id = user["id"].as_str().expect("user id").to_string();
+    assert_eq!(user["wallet"]["availableCreditMicros"], 0);
+
+    let admin = call_rpc(
+        206,
+        "accountManager/users/create",
+        Some(serde_json::json!({
+            "username": "admin-one",
+            "password": "password123",
+            "displayName": "Admin One",
+            "role": "admin"
+        })),
+    );
+    let admin_id = admin["id"].as_str().expect("admin id").to_string();
+    assert!(admin["wallet"].is_null());
+
+    let api_key = call_rpc(
+        202,
+        "apikey/create",
+        Some(serde_json::json!({
+            "name": "Member key",
+            "modelSlug": "gpt-5",
+            "rotationStrategy": "account_rotation"
+        })),
+    );
+    let key_id = api_key["id"].as_str().expect("key id").to_string();
+
+    let storage = Storage::open(ctx.db_path()).expect("open storage");
+    storage.init().expect("init storage");
+    codexmanager_service::wallet_precheck_for_api_key(&storage, &key_id)
+        .expect("unassigned api key should bypass wallet precheck");
+    let missing_owner_charge = codexmanager_service::wallet_charge_for_request(
+        &storage,
+        Some(&key_id),
+        41,
+        0.25,
+        None,
+        Some("default"),
+        None,
+    )
+    .expect("unassigned api key should bypass wallet charge");
+    assert!(missing_owner_charge.is_none());
+
+    let admin_owner_error = call_rpc(
+        207,
+        "accountManager/apiKeyOwners/set",
+        Some(serde_json::json!({
+            "keyId": key_id,
+            "ownerKind": "user",
+            "ownerUserId": admin_id.as_str()
+        })),
+    );
+    assert!(admin_owner_error["error"]
+        .as_str()
+        .expect("admin owner error")
+        .contains("管理员账号不参与额度分发"));
+
+    let admin_wallet_error = call_rpc(
+        208,
+        "accountManager/wallet/topUp",
+        Some(serde_json::json!({
+            "ownerKind": "user",
+            "ownerId": admin_id.as_str(),
+            "amountCreditMicros": 1_000_000
+        })),
+    );
+    assert!(admin_wallet_error["error"]
+        .as_str()
+        .expect("admin wallet error")
+        .contains("管理员账号不参与额度分发"));
+
+    let owner = call_rpc(
+        203,
+        "accountManager/apiKeyOwners/set",
+        Some(serde_json::json!({
+            "keyId": key_id,
+            "ownerKind": "user",
+            "ownerUserId": user_id
+        })),
+    );
+    assert_eq!(owner["ownerKind"], "user");
+    assert_eq!(owner["ownerUserId"], user_id);
+
+    let zero_balance_error = codexmanager_service::wallet_precheck_for_api_key(&storage, &key_id)
+        .expect_err("zero wallet should fail");
+    assert!(zero_balance_error.contains("余额不足"));
+
+    let wallet = call_rpc(
+        204,
+        "accountManager/wallet/topUp",
+        Some(serde_json::json!({
+            "ownerKind": "User",
+            "ownerId": user_id,
+            "amountCreditMicros": 1_000_000,
+            "note": "test top up"
+        })),
+    );
+    assert_eq!(wallet["ownerKind"], "user");
+    assert_eq!(wallet["availableCreditMicros"], 1_000_000);
+    codexmanager_service::wallet_precheck_for_api_key(&storage, &key_id)
+        .expect("funded wallet should pass");
+
+    let rules = call_rpc(
+        209,
+        "quota/billingRule/upsert",
+        Some(serde_json::json!({
+            "name": "Member markup",
+            "multiplierMillis": 1500,
+            "apiKeyId": key_id.as_str(),
+            "priority": 10
+        })),
+    );
+    let rule_id = rules["items"]
+        .as_array()
+        .expect("billing rules")
+        .iter()
+        .find(|item| item["name"].as_str() == Some("Member markup"))
+        .and_then(|item| item["id"].as_str())
+        .expect("rule id")
+        .to_string();
+
+    let charge_entry = codexmanager_service::wallet_charge_for_request(
+        &storage,
+        Some(&key_id),
+        42,
+        0.25,
+        None,
+        Some("default"),
+        Some(r#"{"test":true}"#.to_string()),
+    )
+    .expect("charge wallet")
+    .expect("charge entry");
+    assert_eq!(
+        charge_entry.pricing_rule_id.as_deref(),
+        Some(rule_id.as_str())
+    );
+    let charged_wallet = storage
+        .find_wallet_by_owner("user", &user_id)
+        .expect("read wallet")
+        .expect("wallet");
+    assert_eq!(charged_wallet.balance_credit_micros, 625_000);
+
+    let owners = call_rpc(205, "accountManager/apiKeyOwners/list", None);
+    let owners = owners.as_array().expect("owners array");
+    assert!(owners
+        .iter()
+        .any(|item| item["keyId"].as_str() == Some(key_id.as_str())));
+
+    let distribution_error = call_rpc(
+        210,
+        "accountManager/distribution/set",
+        Some(serde_json::json!({
+            "enabled": false
+        })),
+    );
+    assert!(distribution_error["error"]
+        .as_str()
+        .expect("distribution error")
+        .contains("distribution_mode_locked"));
+
+    let auth_mode_error = call_rpc(
+        211,
+        "accountManager/webAuthMode/set",
+        Some(serde_json::json!({
+            "mode": "none"
+        })),
+    );
+    assert!(auth_mode_error["error"]
+        .as_str()
+        .expect("auth mode error")
+        .contains("account_billing_mode_locked"));
+}

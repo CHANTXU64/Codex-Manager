@@ -51,6 +51,8 @@ pub(super) struct AppSettingsPatch {
     background_tasks: Option<BackgroundTasksInput>,
     env_overrides: Option<HashMap<String, String>>,
     web_access_password: Option<String>,
+    web_auth_mode: Option<String>,
+    distribution_enabled: Option<bool>,
 }
 
 /// 函数 `parse_app_settings_patch`
@@ -186,6 +188,12 @@ pub(super) fn apply_app_settings_patch(patch: AppSettingsPatch) -> Result<(), St
     }
     if let Some(password) = patch.web_access_password {
         let _ = crate::set_web_access_password(Some(&password))?;
+    }
+    if let Some(mode) = patch.web_auth_mode {
+        let _ = crate::set_web_auth_mode(&mode)?;
+    }
+    if let Some(enabled) = patch.distribution_enabled {
+        let _ = crate::set_distribution_enabled(enabled)?;
     }
 
     Ok(())

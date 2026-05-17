@@ -5,11 +5,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   Copy,
+  Database,
+  Download,
   Eye,
   EyeOff,
   MoreVertical,
   Plus,
   RefreshCw,
+  Save,
   Settings2,
   ShieldCheck,
   Trash2,
@@ -21,20 +24,32 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -62,6 +77,8 @@ import {
   AggregateApi,
   AggregateApiBalanceSnapshot,
   AggregateApiSecretResult,
+  AggregateApiSupplierModel,
+  ManagedModelSourceModel,
 } from "@/types";
 
 type TranslateFn = (key: string, values?: Record<string, string | number>) => string;
@@ -69,12 +86,14 @@ type TranslateFn = (key: string, values?: Record<string, string | number>) => st
 const AGGREGATE_API_PROVIDER_LABELS: Record<string, string> = {
   codex: "Codex",
   claude: "Claude",
+  gemini: "Gemini",
 };
 
 const AGGREGATE_API_PROVIDER_FILTER_LABELS: Record<string, string> = {
   all: "全部类型",
   codex: "Codex",
   claude: "Claude",
+  gemini: "Gemini",
 };
 
 function parseBalanceSnapshot(api: AggregateApi): AggregateApiBalanceSnapshot | null {
@@ -112,6 +131,19 @@ function formatBalanceAmount(snapshot: AggregateApiBalanceSnapshot | null) {
     return `$${value}`;
   }
   return unit ? `${value} ${unit}` : value;
+}
+
+function aggregateApiSupplierKey(api: AggregateApi | null) {
+  if (!api) return "";
+  return String(api.supplierName || "").trim() || String(api.url || "").trim();
+}
+
+function sourceModelKey(model: ManagedModelSourceModel | AggregateApiSupplierModel) {
+  return [
+    "sourceKind" in model ? model.sourceKind : model.supplierKey,
+    "sourceId" in model ? model.sourceId : model.providerType,
+    model.upstreamModel,
+  ].join("::");
 }
 
 /**
@@ -171,6 +203,15 @@ export default function AggregateApiPage() {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, boolean>>(
     {},
   );
+  const [modelPoolApiId, setModelPoolApiId] = useState<string | null>(null);
+  const [sourceModelDraft, setSourceModelDraft] = useState({
+    upstreamModel: "",
+    displayName: "",
+  });
+  const [supplierModelDraft, setSupplierModelDraft] = useState({
+    upstreamModel: "",
+    displayName: "",
+  });
 
   const { data: aggregateApis = [], isLoading } = useQuery({
     queryKey: ["aggregate-apis"],
@@ -186,6 +227,13 @@ export default function AggregateApiPage() {
     retry: 1,
   });
 
+  const { data: modelRouting, isLoading: modelRoutingLoading } = useQuery({
+    queryKey: ["model-routing"],
+    queryFn: () => accountClient.listManagedModelRouting(),
+    enabled: isQueryEnabled && Boolean(modelPoolApiId),
+    retry: 1,
+  });
+
   usePageTransitionReady("/aggregate-api/", !isServiceReady || !isLoading);
 
   useEffect(() => {
@@ -193,7 +241,13 @@ export default function AggregateApiPage() {
     setModalOpen(false);
     setEditingId(null);
     setDeleteId(null);
+    setModelPoolApiId(null);
   }, [isPageActive]);
+
+  useEffect(() => {
+    setSourceModelDraft({ upstreamModel: "", displayName: "" });
+    setSupplierModelDraft({ upstreamModel: "", displayName: "" });
+  }, [modelPoolApiId]);
 
   useEffect(() => {
     setStatusOverrides((current) => {
@@ -226,6 +280,48 @@ export default function AggregateApiPage() {
   const editingApi = useMemo(
     () => aggregateApis.find((item) => item.id === editingId) || null,
     [aggregateApis, editingId],
+  );
+
+  const modelPoolApi = useMemo(
+    () => aggregateApis.find((item) => item.id === modelPoolApiId) || null,
+    [aggregateApis, modelPoolApiId],
+  );
+  const modelPoolSupplierKey = useMemo(
+    () => aggregateApiSupplierKey(modelPoolApi),
+    [modelPoolApi],
+  );
+  const modelPoolProviderType = modelPoolApi?.providerType || "codex";
+
+  const { data: supplierModels = [], isLoading: supplierModelsLoading } = useQuery({
+    queryKey: [
+      "aggregate-api",
+      "supplier-models",
+      modelPoolSupplierKey,
+      modelPoolProviderType,
+    ],
+    queryFn: () =>
+      accountClient.listAggregateApiSupplierModels({
+        supplierKey: modelPoolSupplierKey,
+        providerType: modelPoolProviderType,
+      }),
+    enabled: isQueryEnabled && Boolean(modelPoolApiId) && Boolean(modelPoolSupplierKey),
+    retry: 1,
+  });
+
+  const sourceModels = useMemo(
+    () =>
+      (modelRouting?.sourceModels || [])
+        .filter(
+          (item) =>
+            item.sourceKind === "aggregate_api" && item.sourceId === modelPoolApiId,
+        )
+        .sort((a, b) => a.upstreamModel.localeCompare(b.upstreamModel)),
+    [modelRouting?.sourceModels, modelPoolApiId],
+  );
+
+  const sourceModelKeys = useMemo(
+    () => new Set(sourceModels.map((item) => item.upstreamModel)),
+    [sourceModels],
   );
 
   const filteredAggregateApis = useMemo(() => {
@@ -611,6 +707,104 @@ export default function AggregateApiPage() {
     },
   });
 
+  const syncModelPoolMutation = useMutation({
+    mutationFn: (apiId: string) =>
+      accountClient.syncManagedModelSourceModels({
+        sourceKind: "aggregate_api",
+        sourceId: apiId,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["model-routing"] });
+      toast.success(t("模型池已同步"));
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        `${t("同步失败")}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+
+  const saveSourceModelMutation = useMutation({
+    mutationFn: (params: {
+      apiId: string;
+      upstreamModel: string;
+      displayName?: string | null;
+    }) =>
+      accountClient.saveManagedModelSourceModel({
+        sourceKind: "aggregate_api",
+        sourceId: params.apiId,
+        upstreamModel: params.upstreamModel,
+        displayName: params.displayName,
+      }),
+    onSuccess: async () => {
+      setSourceModelDraft({ upstreamModel: "", displayName: "" });
+      await queryClient.invalidateQueries({ queryKey: ["model-routing"] });
+      toast.success(t("来源模型已添加"));
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        `${t("保存失败")}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+
+  const saveSupplierModelMutation = useMutation({
+    mutationFn: (params: {
+      supplierKey: string;
+      providerType: string;
+      upstreamModel: string;
+      displayName?: string | null;
+    }) => accountClient.saveAggregateApiSupplierModel(params),
+    onSuccess: async () => {
+      setSupplierModelDraft({ upstreamModel: "", displayName: "" });
+      await queryClient.invalidateQueries({
+        queryKey: ["aggregate-api", "supplier-models"],
+      });
+      toast.success(t("供应商模型已保存"));
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        `${t("保存失败")}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+
+  const importSupplierModelsMutation = useMutation({
+    mutationFn: (params: {
+      apiId: string;
+      supplierKey: string;
+      providerType: string;
+    }) => accountClient.importAggregateApiSupplierModels(params),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["model-routing"] });
+      toast.success(t("已导入 {count} 个模型", { count: result.imported }));
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        `${t("导入失败")}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+
+  const deleteSupplierModelMutation = useMutation({
+    mutationFn: (params: {
+      supplierKey: string;
+      providerType: string;
+      upstreamModel: string;
+    }) => accountClient.deleteAggregateApiSupplierModel(params),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["aggregate-api", "supplier-models"],
+      });
+      toast.success(t("供应商模型已删除"));
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        `${t("删除失败")}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+
   /**
    * 函数 `openCreateModal`
    *
@@ -759,10 +953,13 @@ export default function AggregateApiPage() {
     return secret.key || "";
   };
 
+  const sourceModelDraftUpstream = sourceModelDraft.upstreamModel.trim();
+  const supplierModelDraftUpstream = supplierModelDraft.upstreamModel.trim();
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {!isServiceReady ? (
-        <Card className="glass-card border-none shadow-sm">
+        <Card className="glass-card shadow-sm">
           <CardContent className="pt-6 text-sm text-muted-foreground">
             {t("服务未连接")}
           </CardContent>
@@ -778,7 +975,7 @@ export default function AggregateApiPage() {
       </div>
 
       <div className="space-y-4">
-        <Card className="glass-card border-none shadow-xl backdrop-blur-md">
+        <Card className="glass-card shadow-sm">
           <CardContent className="px-4 ">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -799,9 +996,12 @@ export default function AggregateApiPage() {
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectGroup>
                     <SelectItem value="all">{t("全部类型")}</SelectItem>
                     <SelectItem value="codex">Codex</SelectItem>
                     <SelectItem value="claude">Claude</SelectItem>
+                    <SelectItem value="gemini">Gemini</SelectItem>
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
@@ -848,7 +1048,7 @@ export default function AggregateApiPage() {
                   {t("刷新余额")}
                 </Button>
                 <Button
-                  className="h-10 gap-2 shadow-lg shadow-primary/20"
+                  className="h-10 gap-2 shadow-sm shadow-primary/20"
                   onClick={openCreateModal}
                   disabled={!isServiceReady}
                 >
@@ -859,7 +1059,7 @@ export default function AggregateApiPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card overflow-hidden border-none py-0 shadow-xl backdrop-blur-md">
+        <Card className="glass-card overflow-hidden py-0 shadow-sm">
           <CardContent className="p-0">
             <Table className="w-full table-fixed">
               <TableHeader>
@@ -871,7 +1071,7 @@ export default function AggregateApiPage() {
                   <TableHead className="w-[130px]">{t("测试连通性")}</TableHead>
                   <TableHead className="w-[150px]">{t("余额")}</TableHead>
                   <TableHead className="w-[112px] text-right pr-4">{t("状态")}</TableHead>
-                  <TableHead className="table-sticky-action-head w-[112px] text-center">
+                  <TableHead className="table-sticky-action-head w-[144px] text-center">
                     {t("操作")}
                   </TableHead>
                 </TableRow>
@@ -1064,6 +1264,7 @@ export default function AggregateApiPage() {
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
+                                  <DropdownMenuGroup>
                                   <DropdownMenuItem
                                     onClick={() => void copySecret(api.id, "username")}
                                   >
@@ -1074,6 +1275,7 @@ export default function AggregateApiPage() {
                                   >
                                     {t("复制密码")}
                                   </DropdownMenuItem>
+                                  </DropdownMenuGroup>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             ) : (
@@ -1221,6 +1423,16 @@ export default function AggregateApiPage() {
                               size="icon"
                               className="h-8 w-8 text-muted-foreground transition-colors hover:text-primary"
                               disabled={!isServiceReady}
+                              onClick={() => setModelPoolApiId(api.id)}
+                              title={t("模型池")}
+                            >
+                              <Database className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground transition-colors hover:text-primary"
+                              disabled={!isServiceReady}
                               onClick={() => openEditModal(api.id)}
                               title={t("编辑配置")}
                             >
@@ -1240,6 +1452,7 @@ export default function AggregateApiPage() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                  <DropdownMenuGroup>
                                 <DropdownMenuItem
                                   className="gap-2"
                                   disabled={!isServiceReady}
@@ -1263,6 +1476,7 @@ export default function AggregateApiPage() {
                                 >
                                   <Trash2 className="h-4 w-4" /> {t("删除聚合 API")}
                                 </DropdownMenuItem>
+                                </DropdownMenuGroup>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
@@ -1283,6 +1497,358 @@ export default function AggregateApiPage() {
         aggregateApi={editingApi}
         defaultSort={defaultCreateSort}
       />
+
+      <Dialog
+        open={Boolean(modelPoolApiId)}
+        onOpenChange={(open) => {
+          if (!open) setModelPoolApiId(null);
+        }}
+      >
+        {modelPoolApi ? (
+          <DialogContent className="max-h-[86vh] max-w-5xl overflow-hidden p-0">
+            <DialogHeader className="border-b px-6 py-5">
+              <DialogTitle>{t("模型池配置")}</DialogTitle>
+              <DialogDescription>
+                {modelPoolApi.supplierName || modelPoolApi.url} ·{" "}
+                {AGGREGATE_API_PROVIDER_LABELS[modelPoolProviderType] ||
+                  modelPoolProviderType}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="max-h-[calc(86vh-92px)] overflow-y-auto px-6 py-5">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">{t("供应商标识")}</p>
+                  <p className="mt-1 truncate font-mono text-xs">
+                    {modelPoolSupplierKey}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">{t("当前模型池")}</p>
+                  <p className="mt-1 text-lg font-semibold">{sourceModels.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">{t("供应商模板")}</p>
+                  <p className="mt-1 text-lg font-semibold">{supplierModels.length}</p>
+                </div>
+              </div>
+
+              <Tabs defaultValue="pool" className="mt-5 gap-4">
+                <TabsList className="grid w-full grid-cols-2 sm:w-[280px]">
+                  <TabsTrigger value="pool">{t("当前模型池")}</TabsTrigger>
+                  <TabsTrigger value="templates">{t("供应商模板")}</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="pool" className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      disabled={
+                        !isServiceReady ||
+                        syncModelPoolMutation.isPending ||
+                        !modelPoolApiId
+                      }
+                      onClick={() => {
+                        if (modelPoolApiId) syncModelPoolMutation.mutate(modelPoolApiId);
+                      }}
+                    >
+                      <RefreshCw
+                        className={
+                          syncModelPoolMutation.isPending
+                            ? "h-4 w-4 animate-spin"
+                            : "h-4 w-4"
+                        }
+                      />
+                      {t("同步 /models")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      disabled={
+                        !isServiceReady ||
+                        importSupplierModelsMutation.isPending ||
+                        supplierModels.length === 0 ||
+                        !modelPoolApiId
+                      }
+                      onClick={() => {
+                        if (!modelPoolApiId) return;
+                        importSupplierModelsMutation.mutate({
+                          apiId: modelPoolApiId,
+                          supplierKey: modelPoolSupplierKey,
+                          providerType: modelPoolProviderType,
+                        });
+                      }}
+                    >
+                      <Download className="h-4 w-4" />
+                      {t("从供应商模板导入")}
+                    </Button>
+                  </div>
+
+                  <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 md:grid-cols-[1fr_1fr_auto]">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="aggregate-source-model">
+                        {t("上游模型名")}
+                      </Label>
+                      <Input
+                        id="aggregate-source-model"
+                        value={sourceModelDraft.upstreamModel}
+                        placeholder="gpt-4o"
+                        onChange={(event) =>
+                          setSourceModelDraft((current) => ({
+                            ...current,
+                            upstreamModel: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="aggregate-source-display">
+                        {t("显示名称")}
+                      </Label>
+                      <Input
+                        id="aggregate-source-display"
+                        value={sourceModelDraft.displayName}
+                        placeholder={sourceModelDraftUpstream || t("可选")}
+                        onChange={(event) =>
+                          setSourceModelDraft((current) => ({
+                            ...current,
+                            displayName: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        className="gap-2"
+                        disabled={
+                          !isServiceReady ||
+                          !modelPoolApiId ||
+                          !sourceModelDraftUpstream ||
+                          saveSourceModelMutation.isPending
+                        }
+                        onClick={() => {
+                          if (!modelPoolApiId || !sourceModelDraftUpstream) return;
+                          saveSourceModelMutation.mutate({
+                            apiId: modelPoolApiId,
+                            upstreamModel: sourceModelDraftUpstream,
+                            displayName: sourceModelDraft.displayName.trim() || null,
+                          });
+                        }}
+                      >
+                        <Save className="h-4 w-4" />
+                        {t("添加到模型池")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border">
+                    <div className="grid grid-cols-[1fr_120px_130px] border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      <span>{t("上游模型")}</span>
+                      <span>{t("来源")}</span>
+                      <span className="text-right">{t("最近同步")}</span>
+                    </div>
+                    <div className="max-h-[300px] overflow-y-auto">
+                      {modelRoutingLoading ? (
+                        <div className="space-y-2 p-3">
+                          <Skeleton className="h-9 w-full" />
+                          <Skeleton className="h-9 w-full" />
+                        </div>
+                      ) : sourceModels.length === 0 ? (
+                        <div className="p-6 text-center text-sm text-muted-foreground">
+                          {t("暂无模型，先同步 /models 或手动添加")}
+                        </div>
+                      ) : (
+                        sourceModels.map((model) => (
+                          <div
+                            key={sourceModelKey(model)}
+                            className="grid grid-cols-[1fr_120px_130px] items-center gap-3 border-b px-3 py-2 last:border-b-0"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate font-mono text-xs">
+                                {model.upstreamModel}
+                              </p>
+                              {model.displayName ? (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {model.displayName}
+                                </p>
+                              ) : null}
+                            </div>
+                            <Badge variant="secondary" className="w-fit">
+                              {model.discoveryKind === "template"
+                                ? t("模板")
+                                : model.discoveryKind === "manual"
+                                  ? t("手动")
+                                  : t("同步")}
+                            </Badge>
+                            <span className="truncate text-right text-xs text-muted-foreground">
+                              {model.lastSyncedAt
+                                ? formatTsFromSeconds(model.lastSyncedAt, t("未知时间"))
+                                : "-"}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="templates" className="space-y-4">
+                  <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 md:grid-cols-[1fr_1fr_auto]">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="supplier-template-model">
+                        {t("供应商模型名")}
+                      </Label>
+                      <Input
+                        id="supplier-template-model"
+                        value={supplierModelDraft.upstreamModel}
+                        placeholder="gpt-4o"
+                        onChange={(event) =>
+                          setSupplierModelDraft((current) => ({
+                            ...current,
+                            upstreamModel: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="supplier-template-display">
+                        {t("显示名称")}
+                      </Label>
+                      <Input
+                        id="supplier-template-display"
+                        value={supplierModelDraft.displayName}
+                        placeholder={supplierModelDraftUpstream || t("可选")}
+                        onChange={(event) =>
+                          setSupplierModelDraft((current) => ({
+                            ...current,
+                            displayName: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        className="gap-2"
+                        disabled={
+                          !isServiceReady ||
+                          !modelPoolSupplierKey ||
+                          !supplierModelDraftUpstream ||
+                          saveSupplierModelMutation.isPending
+                        }
+                        onClick={() => {
+                          if (!modelPoolSupplierKey || !supplierModelDraftUpstream) {
+                            return;
+                          }
+                          saveSupplierModelMutation.mutate({
+                            supplierKey: modelPoolSupplierKey,
+                            providerType: modelPoolProviderType,
+                            upstreamModel: supplierModelDraftUpstream,
+                            displayName: supplierModelDraft.displayName.trim() || null,
+                          });
+                        }}
+                      >
+                        <Save className="h-4 w-4" />
+                        {t("保存模板")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border">
+                    <div className="grid grid-cols-[1fr_100px_116px] border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      <span>{t("供应商模型")}</span>
+                      <span>{t("状态")}</span>
+                      <span className="text-right">{t("操作")}</span>
+                    </div>
+                    <div className="max-h-[300px] overflow-y-auto">
+                      {supplierModelsLoading ? (
+                        <div className="space-y-2 p-3">
+                          <Skeleton className="h-9 w-full" />
+                          <Skeleton className="h-9 w-full" />
+                        </div>
+                      ) : supplierModels.length === 0 ? (
+                        <div className="p-6 text-center text-sm text-muted-foreground">
+                          {t("暂无供应商模板，可先手动维护模型名")}
+                        </div>
+                      ) : (
+                        supplierModels.map((model) => {
+                          const inPool = sourceModelKeys.has(model.upstreamModel);
+                          return (
+                            <div
+                              key={sourceModelKey(model)}
+                              className="grid grid-cols-[1fr_100px_116px] items-center gap-3 border-b px-3 py-2 last:border-b-0"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate font-mono text-xs">
+                                  {model.upstreamModel}
+                                </p>
+                                {model.displayName ? (
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {model.displayName}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <Badge
+                                variant={model.status === "available" ? "secondary" : "outline"}
+                                className="w-fit"
+                              >
+                                {model.status === "available" ? t("可用") : t("禁用")}
+                              </Badge>
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  disabled={
+                                    !isServiceReady ||
+                                    inPool ||
+                                    !modelPoolApiId ||
+                                    saveSourceModelMutation.isPending
+                                  }
+                                  title={inPool ? t("已在模型池") : t("导入到当前模型池")}
+                                  onClick={() => {
+                                    if (!modelPoolApiId) return;
+                                    saveSourceModelMutation.mutate({
+                                      apiId: modelPoolApiId,
+                                      upstreamModel: model.upstreamModel,
+                                      displayName: model.displayName,
+                                    });
+                                  }}
+                                >
+                                  <Download className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-red-500"
+                                  disabled={
+                                    !isServiceReady ||
+                                    deleteSupplierModelMutation.isPending
+                                  }
+                                  title={t("删除模板")}
+                                  onClick={() =>
+                                    deleteSupplierModelMutation.mutate({
+                                      supplierKey: model.supplierKey,
+                                      providerType: model.providerType,
+                                      upstreamModel: model.upstreamModel,
+                                    })
+                                  }
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+          </DialogContent>
+        ) : null}
+      </Dialog>
 
       <ConfirmDialog
         open={Boolean(deleteId)}

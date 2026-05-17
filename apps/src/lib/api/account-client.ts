@@ -5,6 +5,9 @@ import {
   normalizeAggregateApiCreateResult,
   normalizeAggregateApiList,
   normalizeAggregateApiSecretResult,
+  normalizeAggregateApiSupplierModel,
+  normalizeAggregateApiSupplierModelImportResult,
+  normalizeAggregateApiSupplierModelList,
   normalizeAggregateApiTestResult,
   normalizeApiKeyCreateResult,
   normalizeApiKeyList,
@@ -12,6 +15,7 @@ import {
   normalizeLoginStartResult,
   normalizeManagedModelCatalog,
   normalizeManagedModelInfo,
+  normalizeManagedModelRouting,
   normalizeModelCatalog,
   normalizeUsageAggregateSummary,
   normalizeUsageList,
@@ -45,6 +49,8 @@ import {
   AggregateApiBalanceRefreshResult,
   AggregateApiCreateResult,
   AggregateApiSecretResult,
+  AggregateApiSupplierModel,
+  AggregateApiSupplierModelImportResult,
   AggregateApiTestResult,
   ApiKey,
   ApiKeyCreateResult,
@@ -56,6 +62,9 @@ import {
   LoginStartResult,
   ManagedModelCatalog,
   ManagedModelInfo,
+  ManagedModelRouting,
+  ManagedModelSourceMapping,
+  ManagedModelSourceModel,
   ModelCatalog,
   ModelInfo,
   UsageAggregateSummary,
@@ -125,6 +134,38 @@ export interface ManagedModelPayload {
   userEdited?: boolean | null;
   sortIndex?: number | null;
   model: ManagedModelInfo | ModelInfo;
+}
+
+export interface ManagedModelSourceSyncPayload {
+  sourceKind: string;
+  sourceId?: string | null;
+}
+
+export interface ManagedModelSourceModelPayload {
+  sourceKind: string;
+  sourceId: string;
+  upstreamModel: string;
+  displayName?: string | null;
+}
+
+export interface ManagedModelSourceMappingPayload {
+  id?: string | null;
+  platformModelSlug: string;
+  sourceKind: string;
+  sourceId: string;
+  upstreamModel: string;
+  enabled?: boolean | null;
+  priority?: number | null;
+  weight?: number | null;
+  billingModelSlug?: string | null;
+}
+
+export interface AggregateApiSupplierModelPayload {
+  supplierKey: string;
+  providerType: string;
+  upstreamModel: string;
+  displayName?: string | null;
+  status?: string | null;
 }
 
 interface AggregateApiPayload {
@@ -640,6 +681,58 @@ export const accountClient = {
     );
     return normalizeAggregateApiBalanceRefreshResult(result);
   },
+  async listAggregateApiSupplierModels(params?: {
+    supplierKey?: string | null;
+    providerType?: string | null;
+  }): Promise<AggregateApiSupplierModel[]> {
+    const result = await invoke<unknown>(
+      "service_aggregate_api_supplier_models_list",
+      withAddr({
+        supplierKey: params?.supplierKey || null,
+        providerType: params?.providerType || null,
+      })
+    );
+    return normalizeAggregateApiSupplierModelList(result);
+  },
+  async saveAggregateApiSupplierModel(
+    params: AggregateApiSupplierModelPayload,
+  ): Promise<AggregateApiSupplierModel> {
+    const result = await invoke<unknown>(
+      "service_aggregate_api_supplier_model_save",
+      withAddr({ payload: params }),
+    );
+    const item = normalizeAggregateApiSupplierModel(result);
+    if (!item) throw new Error("供应商模型保存结果为空");
+    return item;
+  },
+  deleteAggregateApiSupplierModel: (params: {
+    supplierKey: string;
+    providerType: string;
+    upstreamModel: string;
+  }) =>
+    invoke(
+      "service_aggregate_api_supplier_model_delete",
+      withAddr({
+        supplierKey: params.supplierKey,
+        providerType: params.providerType,
+        upstreamModel: params.upstreamModel,
+      }),
+    ),
+  async importAggregateApiSupplierModels(params: {
+    apiId: string;
+    supplierKey?: string | null;
+    providerType?: string | null;
+  }): Promise<AggregateApiSupplierModelImportResult> {
+    const result = await invoke<unknown>(
+      "service_aggregate_api_supplier_models_import",
+      withAddr({
+        apiId: params.apiId,
+        supplierKey: params.supplierKey || null,
+        providerType: params.providerType || null,
+      }),
+    );
+    return normalizeAggregateApiSupplierModelImportResult(result);
+  },
 
   async listApiKeys(): Promise<ApiKey[]> {
     const result = await invoke<unknown>("service_apikey_list", withAddr());
@@ -708,6 +801,45 @@ export const accountClient = {
     );
     return normalizeManagedModelCatalog(result);
   },
+  async listManagedModelRouting(): Promise<ManagedModelRouting> {
+    const result = await invoke<unknown>("service_model_routing", withAddr());
+    return normalizeManagedModelRouting(result);
+  },
+  async syncManagedModelSourceModels(
+    params: ManagedModelSourceSyncPayload,
+  ): Promise<ManagedModelRouting> {
+    const result = await invoke<unknown>(
+      "service_model_source_sync",
+      withAddr({ payload: params }),
+    );
+    return normalizeManagedModelRouting(result);
+  },
+  async saveManagedModelSourceModel(
+    params: ManagedModelSourceModelPayload,
+  ): Promise<ManagedModelSourceModel> {
+    const result = await invoke<unknown>(
+      "service_model_source_model_save",
+      withAddr({ payload: params }),
+    );
+    const routing = normalizeManagedModelRouting({ sourceModels: [result], mappings: [] });
+    const item = routing.sourceModels[0];
+    if (!item) throw new Error("来源模型保存结果为空");
+    return item;
+  },
+  async saveManagedModelSourceMapping(
+    params: ManagedModelSourceMappingPayload,
+  ): Promise<ManagedModelSourceMapping> {
+    const result = await invoke<unknown>(
+      "service_model_source_mapping_save",
+      withAddr({ payload: params }),
+    );
+    const routing = normalizeManagedModelRouting({ sourceModels: [], mappings: [result] });
+    const item = routing.mappings[0];
+    if (!item) throw new Error("模型映射保存结果为空");
+    return item;
+  },
+  deleteManagedModelSourceMapping: (id: string) =>
+    invoke("service_model_source_mapping_delete", withAddr({ id })),
   async saveManagedModel(params: ManagedModelPayload): Promise<ManagedModelInfo> {
     const payload = {
       previousSlug: params.previousSlug || null,

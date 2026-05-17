@@ -303,6 +303,7 @@ fn to_account_summary_with_reason(
     acc: Account,
     preferred: bool,
     status_reason: Option<String>,
+    has_token: bool,
     plan_type: Option<String>,
     plan_type_raw: Option<String>,
     has_subscription: Option<bool>,
@@ -323,6 +324,7 @@ fn to_account_summary_with_reason(
         sort: acc.sort,
         status: acc.status,
         status_reason,
+        has_token,
         plan_type,
         plan_type_raw,
         has_subscription,
@@ -453,6 +455,7 @@ fn map_account_summary(
     let status_reason = status_reasons.get(&account_id).cloned();
     let preferred = preferred_account_id.is_some_and(|id| id == account_id);
     let plan = resolve_account_plan(tokens.get(&account_id), usages.get(&account_id));
+    let has_token = tokens.contains_key(&account_id);
     let account_metadata = metadata.get(&account_id);
     let subscription = subscriptions.get(&account_id);
     let model_slugs = model_slugs_by_account
@@ -471,6 +474,7 @@ fn map_account_summary(
         account,
         preferred,
         status_reason,
+        has_token,
         plan_type,
         plan_type_raw,
         subscription.map(|value| value.has_subscription),

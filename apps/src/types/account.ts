@@ -24,6 +24,7 @@ export interface Account {
   sort: number;
   status: string;
   statusReason: string;
+  hasToken: boolean;
   planType: string | null;
   planTypeRaw: string | null;
   hasSubscription: boolean | null;

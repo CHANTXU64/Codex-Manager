@@ -16,7 +16,7 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
         "appSettings/get" => super::value_or_error(crate::app_settings_get()),
         "appSettings/set" => super::value_or_error(crate::app_settings_set(req.params.as_ref())),
         "authorContent/get" => super::value_or_error(crate::author_content_get()),
-        "webAuth/status" => super::value_or_error(crate::web_auth_status_value()),
+        "webAuth/status" => super::value_or_error(crate::app_auth_status_value()),
         "webAuth/password/set" => {
             let password = super::str_param(req, "password").unwrap_or("");
             super::value_or_error(

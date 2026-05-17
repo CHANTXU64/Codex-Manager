@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DollarSign,
   Copy,
@@ -41,6 +41,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useApiKeys } from "@/hooks/useApiKeys";
+import {
+  isAdminRole,
+  resolveSessionRole,
+  useAppSession,
+} from "@/hooks/useAppSession";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
 import { useDeferredDesktopActivation } from "@/hooks/useDeferredDesktopActivation";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
@@ -48,7 +53,6 @@ import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { useI18n } from "@/lib/i18n/provider";
 import { accountClient } from "@/lib/api/account-client";
 import { appClient } from "@/lib/api/app-client";
-import { isTauriRuntime } from "@/lib/api/transport";
 import {
   buildGeminiGatewayEndpoint,
   buildOpenAiGatewayEndpoint,
@@ -66,12 +70,35 @@ import {
   formatQuotaLimitUsd,
 } from "@/lib/utils/api-key-quota";
 import { formatCompactNumber } from "@/lib/utils/usage";
+import type { ApiKeyOwner, AppUser } from "@/types";
 
 const ROTATION_STRATEGY_LABELS: Record<string, string> = {
   account_rotation: "账号轮转",
   aggregate_api_rotation: "聚合API轮转",
   hybrid_rotation: "混合轮转（账号优先）",
 };
+
+function userCanOwnApiKey(user: AppUser): boolean {
+  return user.role !== "admin";
+}
+
+function appUserLabel(user: AppUser | null | undefined): string {
+  if (!user) return "未分配";
+  return user.displayName ? `${user.displayName} (${user.username})` : user.username;
+}
+
+function resolveApiKeyOwnerLabel(
+  owner: ApiKeyOwner | undefined,
+  usersById: Map<string, AppUser>,
+  distributionEnabled: boolean,
+  t: (value: string) => string,
+): string {
+  if (!owner) return distributionEnabled ? t("未分配") : t("未启用");
+  if (owner.ownerKind === "user") {
+    return appUserLabel(owner.ownerUserId ? usersById.get(owner.ownerUserId) : null);
+  }
+  return owner.projectId ? `${t("项目")} ${owner.projectId}` : t("未分配");
+}
 
 /**
  * 函数 `formatUsd`
@@ -147,7 +174,7 @@ function ApiKeyStatCard({
   sub: string;
 }) {
   return (
-    <Card className="glass-card overflow-hidden border-none shadow-md backdrop-blur-md transition-all hover:scale-[1.02]">
+    <Card className="glass-card overflow-hidden shadow-sm transition-colors">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         <Icon className={color} />
@@ -162,7 +189,12 @@ function ApiKeyStatCard({
 
 export default function ApiKeysPage() {
   const { t } = useI18n();
-  const { mode } = useRuntimeCapabilities();
+  const queryClient = useQueryClient();
+  const { isDesktopRuntime, mode } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
+  const isAdminMode = isAdminRole(role);
+  const showMemberOwnership = isAdminMode && session?.mode === "accounts";
   const serviceAddr = useAppStore((state) => state.serviceStatus.addr);
   const {
     apiKeys,
@@ -187,6 +219,38 @@ export default function ApiKeysPage() {
   const [deleteKeyId, setDeleteKeyId] = useState<string | null>(null);
   const [ccSwitchImportingId, setCcSwitchImportingId] = useState<string | null>(null);
   const [browserOrigin, setBrowserOrigin] = useState("");
+  const { data: accountManagerStatus } = useQuery({
+    queryKey: ["account-manager", "status"],
+    queryFn: () => appClient.getAccountManagerStatus(),
+    enabled: isUsageQueryEnabled && isPageActive && showMemberOwnership,
+    retry: 1,
+  });
+  const { data: appUsers = [] } = useQuery<AppUser[]>({
+    queryKey: ["account-manager", "users"],
+    queryFn: () => appClient.listAppUsers(),
+    enabled: isUsageQueryEnabled && isPageActive && showMemberOwnership,
+    retry: 1,
+  });
+  const { data: apiKeyOwners = [] } = useQuery<ApiKeyOwner[]>({
+    queryKey: ["account-manager", "api-key-owners"],
+    queryFn: () => appClient.listApiKeyOwners(),
+    enabled: isUsageQueryEnabled && isPageActive && showMemberOwnership,
+    retry: 1,
+  });
+  const billableAppUsers = useMemo(
+    () => appUsers.filter((user) => userCanOwnApiKey(user)),
+    [appUsers],
+  );
+  const appUsersById = useMemo(
+    () => new Map(appUsers.map((user) => [user.id, user])),
+    [appUsers],
+  );
+  const ownerByKeyId = useMemo(
+    () => new Map(apiKeyOwners.map((owner) => [owner.keyId, owner])),
+    [apiKeyOwners],
+  );
+  const distributionEnabled =
+    showMemberOwnership && Boolean(accountManagerStatus?.distributionEnabled);
   const gatewayOrigin = useMemo(
     () =>
       resolveGatewayOrigin({
@@ -227,6 +291,17 @@ export default function ApiKeysPage() {
     () => apiKeys.find((item) => item.id === editingKeyId) || null,
     [apiKeys, editingKeyId]
   );
+  const handleOwnerSaved = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["account-manager", "api-key-owners"],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["account-manager", "users"],
+      }),
+      queryClient.invalidateQueries({ queryKey: ["apikeys"] }),
+    ]);
+  };
   const { data: usageOverview, isPending: isUsageOverviewLoading } = useQuery({
     queryKey: ["apikey-usage-overview", serviceAddr || null],
     queryFn: async () => {
@@ -395,11 +470,7 @@ export default function ApiKeysPage() {
   };
 
   const openCcSwitchImportUrl = async (url: string) => {
-    if (isTauriRuntime()) {
-      await appClient.openInBrowser(url);
-      return;
-    }
-    window.location.href = url;
+    await appClient.openExternalUrl(url);
   };
 
   const importToCcSwitch = async (key: (typeof apiKeys)[number]) => {
@@ -452,7 +523,7 @@ export default function ApiKeysPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {!isServiceReady ? (
-        <Card className="glass-card border-none shadow-sm">
+        <Card className="glass-card shadow-sm">
           <CardContent className="pt-6 text-sm text-muted-foreground">
             {t("服务未连接")}
           </CardContent>
@@ -485,9 +556,9 @@ export default function ApiKeysPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-[min(92vw,390px)] rounded-xl border border-border/70 bg-popover/95 p-2 shadow-xl backdrop-blur-md"
+              className="w-[min(92vw,390px)] rounded-xl border border-border/70 bg-popover/95 p-2 shadow-sm"
             >
-              <DropdownMenuGroup>
+                                  <DropdownMenuGroup>
                 <DropdownMenuLabel className="px-2 py-1 text-[11px] uppercase text-muted-foreground/80">
                   {t("复制调用地址")}
                 </DropdownMenuLabel>
@@ -530,7 +601,7 @@ export default function ApiKeysPage() {
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
-            className="h-10 gap-2 shadow-lg shadow-primary/20"
+            className="h-10 gap-2 shadow-sm shadow-primary/20"
             onClick={openCreateModal}
             disabled={!isServiceReady}
           >
@@ -542,8 +613,8 @@ export default function ApiKeysPage() {
       <div className="grid gap-4 md:grid-cols-2">
         {isLoading || showOverviewLoading ? (
           <>
-            <Skeleton className="h-32 w-full rounded-2xl" />
-            <Skeleton className="h-32 w-full rounded-2xl" />
+            <Skeleton className="h-32 w-full rounded-xl" />
+            <Skeleton className="h-32 w-full rounded-xl" />
           </>
         ) : (
           <>
@@ -552,26 +623,27 @@ export default function ApiKeysPage() {
               value={formatCompactTokenAmount(usageOverview?.totalTokens || 0)}
               icon={Zap}
               color="h-4 w-4 text-amber-500"
-              sub={t("按全部平台密钥累计")}
+              sub={isAdminMode ? t("按全部平台密钥累计") : t("按我的平台密钥累计")}
             />
             <ApiKeyStatCard
               title={t("总费用")}
               value={formatUsd(usageOverview?.totalCostUsd || 0)}
               icon={DollarSign}
               color="h-4 w-4 text-emerald-500"
-              sub={t("按全部平台密钥累计")}
+              sub={isAdminMode ? t("按全部平台密钥累计") : t("按我的平台密钥累计")}
             />
           </>
         )}
       </div>
 
-      <Card className="glass-card overflow-hidden border-none py-0 shadow-xl backdrop-blur-md">
+      <Card className="glass-card overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
-          <Table className="min-w-[1040px]">
+          <Table className="min-w-[1160px]">
             <TableHeader>
               <TableRow>
                 <TableHead>{t("密钥 / ID")}</TableHead>
                 <TableHead>{t("名称")}</TableHead>
+                {showMemberOwnership ? <TableHead>{t("归属成员")}</TableHead> : null}
                 <TableHead>{t("协议")}</TableHead>
                 <TableHead>{t("轮转策略")}</TableHead>
                 <TableHead>{t("绑定模型")}</TableHead>
@@ -588,6 +660,9 @@ export default function ApiKeysPage() {
                     <TableRow key={index}>
                       <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                      {showMemberOwnership ? (
+                        <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                      ) : null}
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                       <TableCell><Skeleton className="h-4 w-28" /></TableCell>
@@ -600,7 +675,7 @@ export default function ApiKeysPage() {
                 ))
               ) : apiKeys.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-48 text-center">
+                  <TableCell colSpan={showMemberOwnership ? 9 : 8} className="h-48 text-center">
                     <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
                       <Plus className="h-8 w-8 opacity-20" />
                       <p>{t("创建密钥")}</p>
@@ -629,6 +704,7 @@ export default function ApiKeysPage() {
                     quotaLimitTokens === null
                       ? null
                       : estimateQuotaLimitUsd(quotaLimitTokens);
+                  const keyOwner = ownerByKeyId.get(key.id);
 
                   return (
                     <TableRow key={key.id} className="group">
@@ -669,6 +745,33 @@ export default function ApiKeysPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-sm font-semibold">{key.name || t("未命名")}</TableCell>
+                      {showMemberOwnership ? (
+                      <TableCell>
+                        <Badge
+                          variant={
+                            keyOwner
+                              ? "outline"
+                              : distributionEnabled
+                                ? "destructive"
+                                : "secondary"
+                          }
+                          className="max-w-[180px] truncate text-[10px] font-normal"
+                          title={resolveApiKeyOwnerLabel(
+                            keyOwner,
+                            appUsersById,
+                            distributionEnabled,
+                            t,
+                          )}
+                        >
+                          {resolveApiKeyOwnerLabel(
+                            keyOwner,
+                            appUsersById,
+                            distributionEnabled,
+                            t,
+                          )}
+                        </Badge>
+                      </TableCell>
+                      ) : null}
                       <TableCell>
                         <Badge variant="outline" className="bg-accent/20 text-[10px] font-normal capitalize">
                           {key.protocol.replace(/_/g, " ")}
@@ -781,6 +884,7 @@ export default function ApiKeysPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                                  <DropdownMenuGroup>
                               <DropdownMenuItem
                                 className="gap-2"
                                 disabled={!isServiceReady}
@@ -802,6 +906,7 @@ export default function ApiKeysPage() {
                               >
                                 <Trash2 className="h-4 w-4" /> {t("删除密钥")}
                               </DropdownMenuItem>
+                              </DropdownMenuGroup>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -819,6 +924,16 @@ export default function ApiKeysPage() {
         open={apiKeyModalOpen}
         onOpenChange={setApiKeyModalOpen}
         apiKey={editingApiKey}
+        appUsers={billableAppUsers}
+        apiKeyOwner={
+          showMemberOwnership && editingApiKey
+            ? ownerByKeyId.get(editingApiKey.id) ?? null
+            : null
+        }
+        distributionEnabled={distributionEnabled}
+        isAdminMode={isAdminMode}
+        showMemberOwnership={showMemberOwnership}
+        onOwnerSaved={handleOwnerSaved}
       />
       <ConfirmDialog
         open={Boolean(deleteKeyId)}

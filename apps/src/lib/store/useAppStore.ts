@@ -32,6 +32,7 @@ interface AppState {
   closeCodexCliGuide: () => void;
   syncShellPathFromLocation: (path: string) => void;
   navigateShellPath: (path: string, options?: { replace?: boolean }) => void;
+  pruneShellTabs: (allowedPaths: string[], fallbackPath: string) => void;
   closeShellTab: (path: string) => TopLevelRoutePath | null;
 }
 
@@ -52,6 +53,16 @@ export const useAppStore = create<AppState>((set) => ({
     lightweightModeOnCloseToTray: false,
     codexCliGuideDismissed: false,
     webAccessPasswordConfigured: false,
+    webAuthMode: "none",
+    webAuthModeOptions: ["none", "password", "accounts"],
+    distributionEnabled: false,
+    billingModeLock: {
+      accountModeLocked: false,
+      distributionLocked: false,
+      reasons: [],
+    },
+    appUsersConfigured: false,
+    appUserCount: 0,
     locale: "zh-CN",
     localeOptions: ["zh-CN", "en", "ru", "ko"],
     serviceAddr: "localhost:48760",
@@ -167,6 +178,39 @@ export const useAppStore = create<AppState>((set) => ({
       return {
         currentShellPath: nextPath,
         openShellTabs: nextTabs,
+      };
+    }),
+
+  pruneShellTabs: (allowedPaths, fallbackPath) =>
+    set((state) => {
+      const allowedSet = new Set(
+        allowedPaths.map((path) => toTopLevelRoutePath(path)),
+      );
+      const fallback = allowedSet.has(toTopLevelRoutePath(fallbackPath))
+        ? toTopLevelRoutePath(fallbackPath)
+        : "/";
+      const nextTabs = state.openShellTabs.filter((path) =>
+        allowedSet.has(path),
+      );
+      const normalizedTabs = nextTabs.length > 0 ? nextTabs : [fallback];
+      const nextCurrent = allowedSet.has(state.currentShellPath)
+        ? state.currentShellPath
+        : normalizedTabs[0] ?? fallback;
+
+      if (
+        typeof window !== "undefined" &&
+        window.location.pathname !== buildStaticRouteUrl(nextCurrent)
+      ) {
+        window.history.replaceState(
+          window.history.state,
+          "",
+          buildStaticRouteUrl(nextCurrent),
+        );
+      }
+
+      return {
+        currentShellPath: nextCurrent,
+        openShellTabs: normalizedTabs,
       };
     }),
 

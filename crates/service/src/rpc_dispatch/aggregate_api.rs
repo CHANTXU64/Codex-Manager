@@ -1,8 +1,14 @@
-use codexmanager_core::rpc::types::{AggregateApiListResult, JsonRpcRequest, JsonRpcResponse};
+use codexmanager_core::rpc::types::{
+    AggregateApiListResult, AggregateApiSupplierModelDeleteParams,
+    AggregateApiSupplierModelImportParams, AggregateApiSupplierModelListResult,
+    AggregateApiSupplierModelUpsertParams, JsonRpcRequest, JsonRpcResponse,
+};
 
 use crate::{
-    create_aggregate_api, delete_aggregate_api, list_aggregate_apis, read_aggregate_api_secret,
-    refresh_aggregate_api_balance, test_aggregate_api_connection, update_aggregate_api,
+    create_aggregate_api, delete_aggregate_api, delete_aggregate_api_supplier_model,
+    import_aggregate_api_supplier_models, list_aggregate_api_supplier_models, list_aggregate_apis,
+    read_aggregate_api_secret, refresh_aggregate_api_balance, save_aggregate_api_supplier_model,
+    test_aggregate_api_connection, update_aggregate_api,
 };
 
 /// 函数 `api_id_param`
@@ -151,6 +157,47 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
         "aggregateApi/refreshBalance" => {
             let api_id = api_id_param(req).unwrap_or("");
             super::value_or_error(refresh_aggregate_api_balance(api_id))
+        }
+        "aggregateApi/supplierModels/list" => {
+            let supplier_key = super::string_param(req, "supplierKey");
+            let provider_type = super::string_param(req, "providerType");
+            super::value_or_error(
+                list_aggregate_api_supplier_models(supplier_key, provider_type)
+                    .map(|items| AggregateApiSupplierModelListResult { items }),
+            )
+        }
+        "aggregateApi/supplierModels/save" => {
+            let params = req
+                .params
+                .clone()
+                .ok_or_else(|| "缺少供应商模型参数".to_string())
+                .and_then(|value| {
+                    serde_json::from_value::<AggregateApiSupplierModelUpsertParams>(value)
+                        .map_err(|err| format!("解析供应商模型参数失败: {err}"))
+                });
+            super::value_or_error(params.and_then(save_aggregate_api_supplier_model))
+        }
+        "aggregateApi/supplierModels/delete" => {
+            let params = req
+                .params
+                .clone()
+                .ok_or_else(|| "缺少供应商模型参数".to_string())
+                .and_then(|value| {
+                    serde_json::from_value::<AggregateApiSupplierModelDeleteParams>(value)
+                        .map_err(|err| format!("解析供应商模型参数失败: {err}"))
+                });
+            super::ok_or_error(params.and_then(delete_aggregate_api_supplier_model))
+        }
+        "aggregateApi/sourceModels/importSupplier" => {
+            let params = req
+                .params
+                .clone()
+                .ok_or_else(|| "缺少供应商模型导入参数".to_string())
+                .and_then(|value| {
+                    serde_json::from_value::<AggregateApiSupplierModelImportParams>(value)
+                        .map_err(|err| format!("解析供应商模型导入参数失败: {err}"))
+                });
+            super::value_or_error(params.and_then(import_aggregate_api_supplier_models))
         }
         _ => return None,
     };

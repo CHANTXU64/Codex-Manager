@@ -50,6 +50,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -80,6 +81,7 @@ import {
   type DeleteDialogState,
   type StatusFilter,
   AccountInfoCell,
+  AccountStatusCell,
   QuotaOverviewCell,
   buildQuotaSummaryItems,
   formatAccountExportModeLabel,
@@ -324,7 +326,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
   return (
     <div className="space-y-6">
       {!isServiceReady ? (
-        <Card className="glass-card border-none shadow-sm">
+        <Card className="glass-card shadow-sm">
           <CardContent className="pt-6 text-sm text-muted-foreground">
             {t(
               "服务未连接，账号列表与相关操作暂不可用；连接恢复后会自动继续加载。",
@@ -333,7 +335,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
         </Card>
       ) : null}
 
-      <Card className="glass-card border-none shadow-md backdrop-blur-md">
+      <Card className="glass-card shadow-sm">
         <CardContent className="grid gap-3 pt-0 lg:grid-cols-[200px_auto_minmax(0,1fr)_auto] lg:items-center">
           <div className="min-w-0">
             <Input
@@ -352,6 +354,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
+                    <SelectGroup>
                 <SelectItem value="all">
                   {t("全部类型")} ({accounts.length})
                 </SelectItem>
@@ -361,6 +364,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                     {planType.count})
                   </SelectItem>
                 ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
             <Select
@@ -375,11 +379,13 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
+                    <SelectGroup>
                 {statusFilterOptions.map((filter) => (
                   <SelectItem key={filter.id} value={filter.id}>
                     {filter.label}
                   </SelectItem>
                 ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </div>
@@ -434,9 +440,9 @@ export function AccountsPageView(props: AccountsPageViewProps) {
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className="w-64 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-xl backdrop-blur-md"
+                className="w-64 rounded-xl border border-border/70 bg-popover/95 p-2 shadow-sm"
               >
-                <DropdownMenuGroup>
+                                  <DropdownMenuGroup>
                   <DropdownMenuLabel className="px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/80">
                     {t("刷新")}
                   </DropdownMenuLabel>
@@ -481,7 +487,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuLabel className="px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground/80">
-                    {t("账号管理")}
+                    {t("号池管理")}
                   </DropdownMenuLabel>
                   <DropdownMenuItem
                     className="h-9 rounded-lg px-2"
@@ -620,12 +626,14 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
+                    <SelectGroup>
                   <SelectItem value="multiple">
                     {formatAccountExportModeLabel("multiple", t)}
                   </SelectItem>
                   <SelectItem value="single">
                     {formatAccountExportModeLabel("single", t)}
                   </SelectItem>
+                  </SelectGroup>
                 </SelectContent>
               </Select>
               <div className="rounded-xl bg-accent/20 px-3 py-2">
@@ -753,7 +761,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
         </DialogContent>
       </Dialog>
 
-      <Card className="glass-card overflow-hidden border-none py-0 shadow-xl backdrop-blur-md">
+      <Card className="glass-card overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -941,24 +949,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <div
-                            className={cn(
-                              "h-1.5 w-1.5 rounded-full",
-                              account.isAvailable ? "bg-green-500" : "bg-red-500",
-                            )}
-                          />
-                          <span
-                            className={cn(
-                              "text-[11px] font-medium",
-                              account.isAvailable
-                                ? "text-green-600 dark:text-green-400"
-                                : "text-red-600 dark:text-red-400",
-                            )}
-                          >
-                            {t(account.availabilityText || "未知")}
-                          </span>
-                        </div>
+                        <AccountStatusCell account={account} />
                       </TableCell>
                       <TableCell className="table-sticky-action-cell">
                         <div className="table-action-cell gap-1">
@@ -992,6 +983,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                                  <DropdownMenuGroup>
                               <DropdownMenuItem
                                 className="gap-2"
                                 disabled={
@@ -1063,6 +1055,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                               >
                                 <Trash2 className="h-4 w-4" /> {t("删除")}
                               </DropdownMenuItem>
+                              </DropdownMenuGroup>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
@@ -1095,11 +1088,13 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                    <SelectGroup>
                 {["5", "10", "20", "50", "100", "500"].map((value) => (
                   <SelectItem key={value} value={value}>
                     {value}
                   </SelectItem>
                 ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </div>
@@ -1180,8 +1175,8 @@ export function AccountsPageView(props: AccountsPageViewProps) {
           }
         }}
       >
-        <DialogContent className="glass-card border-none sm:max-w-[560px]">
-          <DialogHeader>
+        <DialogContent className="glass-card max-h-[calc(100vh-2rem)] overflow-hidden p-0 sm:max-w-[560px]">
+          <DialogHeader className="px-6 pt-6">
             <DialogTitle>{t("编辑账号信息")}</DialogTitle>
             <DialogDescription>
               {accountEditorState
@@ -1189,7 +1184,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                 : t("修改账号的基础资料。")}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-2">
+          <div className="grid max-h-[calc(100vh-13rem)] gap-4 overflow-y-auto px-6 py-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="account-label-input">{t("账号名称")}</Label>
@@ -1312,7 +1307,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
               </div>
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-2">
+          <DialogFooter className="mx-0 mb-0 gap-2 rounded-b-xl border-t bg-muted/40 px-6 py-4 sm:gap-2">
             <DialogClose
               className={buttonVariants({ variant: "outline" })}
               type="button"

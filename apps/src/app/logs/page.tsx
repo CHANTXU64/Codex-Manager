@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -50,8 +51,14 @@ import {
 import { serviceClient } from "@/lib/api/service-client";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
 import { useDeferredDesktopActivation } from "@/hooks/useDeferredDesktopActivation";
+import {
+  isAdminRole,
+  resolveSessionRole,
+  useAppSession,
+} from "@/hooks/useAppSession";
 import { useLocalDayRange } from "@/hooks/useLocalDayRange";
 import { usePageTransitionReady } from "@/hooks/usePageTransitionReady";
+import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { useI18n } from "@/lib/i18n/provider";
 import { useAppStore } from "@/lib/store/useAppStore";
 import { copyTextToClipboard } from "@/lib/utils/clipboard";
@@ -187,7 +194,7 @@ function SummaryCard({
   return (
     <Card
       size="sm"
-      className="glass-card border-none shadow-sm backdrop-blur-md transition-all hover:-translate-y-0.5"
+      className="glass-card shadow-sm transition-all"
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1.5">
         <CardTitle className="text-[13px] font-medium text-muted-foreground">
@@ -228,13 +235,13 @@ function SummaryCard({
 function LogsPageSkeleton() {
   return (
     <div className="space-y-5">
-      <Skeleton className="h-28 w-full rounded-3xl" />
+      <Skeleton className="h-28 w-full rounded-xl" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-32 w-full rounded-3xl" />
+          <Skeleton key={index} className="h-32 w-full rounded-xl" />
         ))}
       </div>
-      <Skeleton className="h-[420px] w-full rounded-3xl" />
+      <Skeleton className="h-[420px] w-full rounded-xl" />
     </div>
   );
 }
@@ -832,6 +839,10 @@ function AccountKeyInfoCell({
   const aggregateApiById = apiKey?.aggregateApiId
     ? aggregateApiMap.get(apiKey.aggregateApiId) || null
     : null;
+  const actualAggregateApi =
+    log.actualSourceKind === "aggregate_api" && log.actualSourceId
+      ? aggregateApiMap.get(log.actualSourceId) || null
+      : null;
   /**
    * 函数 `aggregateApiByUrl`
    *
@@ -855,10 +866,16 @@ function AccountKeyInfoCell({
     }
     return null;
   })();
-  const aggregateApi = aggregateApiById || aggregateApiByUrl;
-  const selectedAggregateApiId = aggregateApi?.id || "";
+  const aggregateApi = actualAggregateApi || aggregateApiById || aggregateApiByUrl;
+  const selectedAggregateApiId =
+    log.actualSourceKind === "aggregate_api" && log.actualSourceId
+      ? log.actualSourceId
+      : aggregateApi?.id || "";
   const isAggregateApi = Boolean(
-    log.aggregateApiSupplierName || log.aggregateApiUrl || aggregateApi,
+    log.actualSourceKind === "aggregate_api" ||
+      log.aggregateApiSupplierName ||
+      log.aggregateApiUrl ||
+      aggregateApi,
   );
   const aggregateApiDisplayName = resolveAggregateApiDisplayName(
     log,
@@ -1245,6 +1262,9 @@ function ModelEffortCell({
 }) {
   const { t } = useI18n();
   const model = String(log.model || "").trim();
+  const upstreamModel = String(log.upstreamModel || "").trim();
+  const actualSourceKind = String(log.actualSourceKind || "").trim();
+  const actualSourceId = String(log.actualSourceId || "").trim();
   const effort = String(log.reasoningEffort || "").trim();
   const clientServiceTier = resolveDisplayServiceTier(log.serviceTier);
   const effectiveServiceTier = resolveDisplayServiceTier(
@@ -1261,15 +1281,34 @@ function ModelEffortCell({
           <span className="block max-w-[160px] truncate font-medium text-foreground">
             {display}
           </span>
+          {upstreamModel && upstreamModel !== model ? (
+            <span className="block max-w-[160px] truncate font-mono text-[10px] text-muted-foreground">
+              -&gt; {upstreamModel}
+            </span>
+          ) : null}
           <ServiceTierBadge serviceTier={badgeServiceTier} />
         </div>
       </TooltipTrigger>
       <TooltipContent className="max-w-sm">
         <div className="flex min-w-[220px] flex-col gap-2">
           <div className="space-y-0.5">
-            <div className="text-[10px] text-background/70">{t("模型")}</div>
+            <div className="text-[10px] text-background/70">{t("平台模型")}</div>
             <div className="break-all font-mono text-[11px]">
               {model || "-"}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            <div className="text-[10px] text-background/70">{t("上游模型")}</div>
+            <div className="break-all font-mono text-[11px]">
+              {upstreamModel || "-"}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            <div className="text-[10px] text-background/70">{t("实际来源")}</div>
+            <div className="break-all font-mono text-[11px]">
+              {actualSourceKind && actualSourceId
+                ? `${actualSourceKind}:${actualSourceId}`
+                : actualSourceKind || actualSourceId || "-"}
             </div>
           </div>
           <div className="space-y-0.5">
@@ -1359,6 +1398,10 @@ function LogsPageContent() {
   const localDayRange = useLocalDayRange();
   const searchParams = useSearchParams();
   const { serviceStatus } = useAppStore();
+  const { isDesktopRuntime } = useRuntimeCapabilities();
+  const { data: session, isLoading: isSessionLoading } = useAppSession();
+  const role = resolveSessionRole(session, isSessionLoading, isDesktopRuntime);
+  const isAdminMode = isAdminRole(role);
   const isPageActive = useDesktopPageActive("/logs/");
   const queryClient = useQueryClient();
   const areLogQueriesEnabled = useDeferredDesktopActivation(serviceStatus.connected);
@@ -1406,7 +1449,7 @@ function LogsPageContent() {
   const { data: accountsResult } = useQuery({
     queryKey: ["accounts", "lookup"],
     queryFn: () => accountClient.list(),
-    enabled: areLogQueriesEnabled && isPageActive,
+    enabled: areLogQueriesEnabled && isPageActive && isAdminMode,
     staleTime: 60_000,
     retry: 1,
     placeholderData: (previousData): AccountListResult | undefined =>
@@ -1434,7 +1477,7 @@ function LogsPageContent() {
   const { data: aggregateApisResult } = useQuery({
     queryKey: ["aggregate-apis", "lookup"],
     queryFn: () => accountClient.listAggregateApis(),
-    enabled: areLogQueriesEnabled && isPageActive,
+    enabled: areLogQueriesEnabled && isPageActive && isAdminMode,
     staleTime: 60_000,
     retry: 1,
   });
@@ -1498,7 +1541,7 @@ function LogsPageContent() {
         pageSize: gatewayPageSizeNumber,
         stageFilter: gatewayStageFilter,
       }),
-    enabled: areLogQueriesEnabled && isPageActive,
+    enabled: areLogQueriesEnabled && isPageActive && isAdminMode,
     refetchInterval: 5000,
     retry: 1,
   });
@@ -1629,6 +1672,12 @@ function LogsPageContent() {
     };
   }, [localDayRange.dayEndTs, localDayRange.dayStartTs, timePreset]);
 
+  useEffect(() => {
+    if (!isAdminMode && activeTab === "gateway-errors") {
+      setActiveTab("requests");
+    }
+  }, [activeTab, isAdminMode]);
+
   const currentFilterLabel =
     filter === "all"
       ? t("全部状态")
@@ -1724,23 +1773,25 @@ function LogsPageContent() {
       <Tabs
         value={activeTab}
         onValueChange={(value) => {
-          if (value === "requests" || value === "gateway-errors") {
+          if (value === "requests" || (isAdminMode && value === "gateway-errors")) {
             setActiveTab(value);
           }
         }}
         className="w-full"
       >
-        <TabsList className="glass-card flex h-11 w-full justify-start overflow-x-auto rounded-xl border-none p-1 no-scrollbar lg:w-fit">
+        <TabsList className="glass-card flex h-11 w-full justify-start overflow-x-auto rounded-xl p-1 no-scrollbar lg:w-fit">
           <TabsTrigger value="requests" className="gap-2 px-5 shrink-0">
             <Database className="h-4 w-4" /> {t("请求日志")}
           </TabsTrigger>
+          {isAdminMode ? (
           <TabsTrigger value="gateway-errors" className="gap-2 px-5 shrink-0">
             <Shield className="h-4 w-4" /> {t("网关错误诊断")}
           </TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="requests" className="space-y-5">
-          <Card className="glass-card border-none shadow-md backdrop-blur-md">
+          <Card className="glass-card shadow-sm">
             <CardContent className="space-y-3 pt-0">
               <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-center">
                 <div className="min-w-0">
@@ -1756,21 +1807,24 @@ function LogsPageContent() {
                 </div>
                 <div className="flex shrink-0 items-center gap-1 rounded-xl border border-border/60 bg-muted/30 p-1">
                   {["all", "2xx", "4xx", "5xx"].map((item) => (
-                    <button
+                    <Button
                       key={item}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => {
                         setFilter(item as StatusFilter);
                         setPage(1);
                       }}
                       className={cn(
-                        "rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all",
+                        "h-auto rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all",
                         filter === item
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
                       )}
                     >
                       {item.toUpperCase()}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 <div className="flex shrink-0 items-center gap-2 xl:justify-self-end">
@@ -1784,6 +1838,7 @@ function LogsPageContent() {
                   >
                     <RefreshCw className="mr-1.5 h-4 w-4" /> {t("刷新")}
                   </Button>
+                  {isAdminMode ? (
                   <Button
                     variant="destructive"
                     size="sm"
@@ -1793,6 +1848,7 @@ function LogsPageContent() {
                   >
                     <Trash2 className="mr-1.5 h-4 w-4" /> {t("清空日志")}
                   </Button>
+                  ) : null}
                 </div>
               </div>
 
@@ -1811,18 +1867,21 @@ function LogsPageContent() {
                         ["today", t("今天")],
                       ] as Array<[TimeRangePreset, string]>
                     ).map(([value, label]) => (
-                      <button
+                      <Button
                         key={value}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => applyTimePreset(value)}
                         className={cn(
-                          "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+                          "h-auto rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
                           timePreset === value
                             ? "bg-background text-foreground shadow-sm"
                             : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
                         )}
                       >
                         {label}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </div>
@@ -1865,12 +1924,14 @@ function LogsPageContent() {
                     {compactMetaText}
                   </div>
                   {hasActiveTimeRange ? (
-                    <button
-                      className="mt-1 text-xs text-primary hover:underline"
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="mt-1 h-auto p-0 text-xs text-primary hover:underline"
                       onClick={() => applyTimePreset("all")}
                     >
                       {t("清除时间筛选")}
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </div>
@@ -1908,7 +1969,7 @@ function LogsPageContent() {
             />
           </div>
 
-          <Card className="glass-card overflow-hidden border-none gap-0 py-0 shadow-xl backdrop-blur-md">
+          <Card className="glass-card overflow-hidden gap-0 py-0 shadow-sm">
             <CardHeader className="flex min-h-1 items-center border-b border-border/40 bg-[var(--table-section-bg)] py-3">
               <div className="flex w-full flex-col gap-1 xl:flex-row xl:items-center xl:justify-between">
                 <div>
@@ -2093,11 +2154,13 @@ function LogsPageContent() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectGroup>
                     {["5", "10", "20", "50", "100", "200"].map((value) => (
                       <SelectItem key={value} value={value}>
                         {value}
                       </SelectItem>
                     ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
@@ -2128,8 +2191,9 @@ function LogsPageContent() {
           </div>
         </TabsContent>
 
+        {isAdminMode ? (
         <TabsContent value="gateway-errors" className="space-y-5">
-          <Card className="glass-card border-none shadow-md backdrop-blur-md">
+          <Card className="glass-card shadow-sm">
             <CardContent className="grid gap-4 pt-0 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
               <div className="space-y-1">
                 <div className="text-sm font-medium text-foreground">
@@ -2155,12 +2219,14 @@ function LogsPageContent() {
                       <SelectValue>{gatewayStageFilterLabel}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
+                    <SelectGroup>
                       <SelectItem value="all">{t("全部阶段")}</SelectItem>
                       {gatewayStageOptions.map((stage) => (
                         <SelectItem key={stage} value={stage}>
                           {stage}
                         </SelectItem>
                     ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
                 </div>
@@ -2194,7 +2260,7 @@ function LogsPageContent() {
             </CardContent>
           </Card>
 
-          <Card className="glass-card overflow-hidden border-none gap-0 py-0 shadow-xl backdrop-blur-md">
+          <Card className="glass-card overflow-hidden gap-0 py-0 shadow-sm">
             <CardHeader className="flex min-h-1 items-center border-b border-border/40 bg-[var(--table-section-bg)] py-3">
               <div className="flex w-full flex-col gap-1 xl:flex-row xl:items-center xl:justify-between">
                 <div>
@@ -2421,11 +2487,13 @@ function LogsPageContent() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectGroup>
                     {["10", "20", "50", "100"].map((value) => (
                       <SelectItem key={value} value={value}>
                         {value}
                       </SelectItem>
                     ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>
@@ -2461,8 +2529,10 @@ function LogsPageContent() {
             </div>
           </div>
         </TabsContent>
+        ) : null}
       </Tabs>
 
+      {isAdminMode ? (
       <ConfirmDialog
         open={clearConfirmOpen}
         onOpenChange={setClearConfirmOpen}
@@ -2472,6 +2542,8 @@ function LogsPageContent() {
         confirmVariant="destructive"
         onConfirm={() => clearMutation.mutate()}
       />
+      ) : null}
+      {isAdminMode ? (
       <ConfirmDialog
         open={clearGatewayConfirmOpen}
         onOpenChange={setClearGatewayConfirmOpen}
@@ -2481,6 +2553,7 @@ function LogsPageContent() {
         confirmVariant="destructive"
         onConfirm={() => clearGatewayMutation.mutate()}
       />
+      ) : null}
     </div>
   );
 }

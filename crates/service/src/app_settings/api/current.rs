@@ -1,6 +1,6 @@
 use crate::app_settings::{list_app_settings_map, listener_bind_addr_for_mode};
 use crate::initialize_storage_if_needed;
-use crate::web_access_password_configured;
+use crate::{current_web_auth_mode, distribution_enabled, web_access_password_configured};
 use codexmanager_core::rpc::types::ModelInfo;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -159,6 +159,13 @@ pub(super) fn current_app_settings_value(
     let author_server_recommendations_raw =
         serialize_author_link_items(&author_server_recommendations)?;
     let env_overrides = current_env_overrides();
+    let auth_status = crate::app_auth_status_value().unwrap_or_else(|_| {
+        serde_json::json!({
+            "appUsersConfigured": false,
+            "appUserCount": 0,
+            "activeAdminCount": 0,
+        })
+    });
 
     persist_current_snapshot(
         update_auto_check,
@@ -197,7 +204,7 @@ pub(super) fn current_app_settings_value(
         }
     }
 
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "updateAutoCheck": update_auto_check,
         "closeToTrayOnClose": close_to_tray,
         "closeToTraySupported": close_to_tray_supported,
@@ -240,7 +247,48 @@ pub(super) fn current_app_settings_value(
         "envOverrideReservedKeys": env_override_reserved_keys(),
         "envOverrideUnsupportedKeys": env_override_unsupported_keys(),
         "webAccessPasswordConfigured": web_access_password_configured(),
-    }))
+    });
+    if let Some(object) = result.as_object_mut() {
+        object.insert("webAuthMode".to_string(), current_web_auth_mode().into());
+        object.insert(
+            "webAuthModeOptions".to_string(),
+            serde_json::json!(["none", "password", "accounts"]),
+        );
+        object.insert(
+            "distributionEnabled".to_string(),
+            distribution_enabled().into(),
+        );
+        object.insert(
+            "billingModeLock".to_string(),
+            auth_status
+                .get("billingModeLock")
+                .cloned()
+                .unwrap_or_else(|| {
+                    serde_json::json!({
+                        "accountModeLocked": false,
+                        "distributionLocked": false,
+                        "reasons": []
+                    })
+                }),
+        );
+        object.insert(
+            "appUsersConfigured".to_string(),
+            auth_status
+                .get("appUsersConfigured")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+                .into(),
+        );
+        object.insert(
+            "appUserCount".to_string(),
+            auth_status
+                .get("appUserCount")
+                .and_then(|value| value.as_i64())
+                .unwrap_or(0)
+                .into(),
+        );
+    }
+    Ok(result)
 }
 
 pub(super) fn current_author_content_value() -> Result<Value, String> {

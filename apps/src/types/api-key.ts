@@ -1,3 +1,5 @@
+import type { ManagedModelSourceModel } from "@/types/model";
+
 export interface ApiKey {
   id: string;
   name: string;
@@ -93,6 +95,21 @@ export interface AggregateApiBalanceRefreshResult {
   message: string | null;
   queriedAt: number;
   latencyMs: number;
+}
+
+export interface AggregateApiSupplierModel {
+  supplierKey: string;
+  providerType: string;
+  upstreamModel: string;
+  displayName: string | null;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AggregateApiSupplierModelImportResult {
+  imported: number;
+  items: ManagedModelSourceModel[];
 }
 
 export interface ApiKeyUsageStat {

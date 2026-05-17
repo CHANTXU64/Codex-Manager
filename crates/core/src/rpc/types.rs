@@ -182,6 +182,8 @@ pub struct AccountSummary {
     pub sort: i64,
     pub status: String,
     pub status_reason: Option<String>,
+    #[serde(default)]
+    pub has_token: bool,
     pub plan_type: Option<String>,
     pub plan_type_raw: Option<String>,
     pub has_subscription: Option<bool>,
@@ -449,6 +451,31 @@ pub struct QuotaOverviewResult {
     pub aggregate_api: QuotaAggregateApiOverviewResult,
     pub openai_account: QuotaOpenAiAccountOverviewResult,
     pub today_usage: QuotaTodayUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BillingRuleResult {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub priority: i64,
+    pub multiplier_millis: i64,
+    pub model_pattern: Option<String>,
+    pub service_tier: Option<String>,
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub api_key_id: Option<String>,
+    pub starts_at: Option<i64>,
+    pub ends_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaBillingRulesResult {
+    pub items: Vec<BillingRuleResult>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -834,6 +861,63 @@ pub struct AggregateApiBalanceRefreshResult {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateApiSupplierModelEntry {
+    pub supplier_key: String,
+    pub provider_type: String,
+    pub upstream_model: String,
+    pub display_name: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateApiSupplierModelListResult {
+    #[serde(default)]
+    pub items: Vec<AggregateApiSupplierModelEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateApiSupplierModelUpsertParams {
+    pub supplier_key: String,
+    pub provider_type: String,
+    pub upstream_model: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateApiSupplierModelDeleteParams {
+    pub supplier_key: String,
+    pub provider_type: String,
+    pub upstream_model: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateApiSupplierModelImportParams {
+    pub api_id: String,
+    #[serde(default)]
+    pub supplier_key: Option<String>,
+    #[serde(default)]
+    pub provider_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateApiSupplierModelImportResult {
+    pub imported: usize,
+    #[serde(default)]
+    pub items: Vec<ManagedModelSourceModelEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelsResponse {
     #[serde(default)]
     pub models: Vec<ModelInfo>,
@@ -886,6 +970,179 @@ pub struct ManagedModelCatalogUpsertParams {
     pub model: ModelInfo,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedModelSourceModelEntry {
+    pub source_kind: String,
+    pub source_id: String,
+    pub upstream_model: String,
+    pub display_name: Option<String>,
+    pub status: String,
+    pub discovery_kind: String,
+    pub last_synced_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedModelSourceMappingEntry {
+    pub id: String,
+    pub platform_model_slug: String,
+    pub source_kind: String,
+    pub source_id: String,
+    pub upstream_model: String,
+    pub enabled: bool,
+    pub priority: i64,
+    pub weight: i64,
+    pub billing_model_slug: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedModelRoutingResult {
+    #[serde(default)]
+    pub source_models: Vec<ManagedModelSourceModelEntry>,
+    #[serde(default)]
+    pub mappings: Vec<ManagedModelSourceMappingEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedModelSourceSyncParams {
+    pub source_kind: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedModelSourceModelUpsertParams {
+    pub source_kind: String,
+    pub source_id: String,
+    pub upstream_model: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedModelSourceMappingUpsertParams {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub platform_model_slug: String,
+    pub source_kind: String,
+    pub source_id: String,
+    pub upstream_model: String,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub priority: Option<i64>,
+    #[serde(default)]
+    pub weight: Option<i64>,
+    #[serde(default)]
+    pub billing_model_slug: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupEntry {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub sort: i64,
+    pub is_default: bool,
+    pub rate_multiplier_millis: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupModelEntry {
+    pub group_id: String,
+    pub platform_model_slug: String,
+    pub enabled: bool,
+    pub rate_multiplier_millis: Option<i64>,
+    pub billing_model_slug: Option<String>,
+    pub note: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserModelGroupEntry {
+    pub user_id: String,
+    pub group_id: String,
+    pub status: String,
+    pub expires_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupListResult {
+    #[serde(default)]
+    pub groups: Vec<ModelGroupEntry>,
+    #[serde(default)]
+    pub models: Vec<ModelGroupModelEntry>,
+    #[serde(default)]
+    pub user_assignments: Vec<UserModelGroupEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupUpsertParams {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub sort: Option<i64>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
+    #[serde(default)]
+    pub rate_multiplier_millis: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupModelUpsertParams {
+    pub platform_model_slug: String,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub rate_multiplier_millis: Option<i64>,
+    #[serde(default)]
+    pub billing_model_slug: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupModelsSetParams {
+    pub group_id: String,
+    #[serde(default)]
+    pub models: Vec<ModelGroupModelUpsertParams>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelGroupUsersSetParams {
+    pub group_id: String,
+    #[serde(default)]
+    pub user_ids: Vec<String>,
+}
+
 fn default_model_source_kind() -> String {
     "remote".to_string()
 }
@@ -898,7 +1155,7 @@ fn default_input_modalities() -> Vec<String> {
     vec!["text".to_string(), "image".to_string()]
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub slug: String,
     pub display_name: String,
@@ -964,6 +1221,45 @@ pub struct ModelInfo {
     pub extra: BTreeMap<String, Value>,
 }
 
+impl Default for ModelInfo {
+    fn default() -> Self {
+        Self {
+            slug: String::new(),
+            display_name: String::new(),
+            description: None,
+            default_reasoning_level: None,
+            supported_reasoning_levels: Vec::new(),
+            shell_type: None,
+            visibility: None,
+            supported_in_api: default_supported_in_api(),
+            priority: 0,
+            additional_speed_tiers: Vec::new(),
+            availability_nux: None,
+            upgrade: None,
+            base_instructions: None,
+            model_messages: None,
+            supports_reasoning_summaries: None,
+            default_reasoning_summary: None,
+            support_verbosity: None,
+            default_verbosity: None,
+            apply_patch_tool_type: None,
+            web_search_tool_type: None,
+            truncation_policy: None,
+            supports_parallel_tool_calls: None,
+            supports_image_detail_original: None,
+            context_window: None,
+            auto_compact_token_limit: None,
+            effective_context_window_percent: None,
+            experimental_supported_tools: Vec::new(),
+            input_modalities: default_input_modalities(),
+            minimal_client_version: None,
+            supports_search_tool: None,
+            available_in_plans: Vec::new(),
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelReasoningLevel {
     pub effort: String,
@@ -1001,6 +1297,9 @@ pub struct RequestLogSummary {
     pub transparent_mode: Option<bool>,
     pub enhanced_mode: Option<bool>,
     pub model: Option<String>,
+    pub upstream_model: Option<String>,
+    pub actual_source_kind: Option<String>,
+    pub actual_source_id: Option<String>,
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
     pub effective_service_tier: Option<String>,
@@ -1191,6 +1490,170 @@ pub struct StartupSnapshotResult {
     pub manual_preferred_account_id: Option<String>,
     pub request_log_today_summary: RequestLogTodaySummaryResult,
     pub request_logs: Vec<RequestLogSummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTokenUsageResult {
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+    pub request_count: i64,
+    pub success_count: i64,
+    pub error_count: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardDailyUsagePoint {
+    pub day_start_ts: i64,
+    pub day_end_ts: i64,
+    pub usage: DashboardTokenUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardUserUsageSummary {
+    pub user_id: String,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub status: Option<String>,
+    pub wallet_available_credit_micros: Option<i64>,
+    pub today_usage: DashboardTokenUsageResult,
+    pub range_usage: DashboardTokenUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSourceUsageSummary {
+    pub source_kind: String,
+    pub source_id: String,
+    pub name: Option<String>,
+    pub status: Option<String>,
+    pub provider: Option<String>,
+    pub today_usage: DashboardTokenUsageResult,
+    pub range_usage: DashboardTokenUsageResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardAdminUsageSummaryResult {
+    pub range_start_ts: i64,
+    pub range_end_ts: i64,
+    pub today_start_ts: i64,
+    pub today_end_ts: i64,
+    pub today_usage: DashboardTokenUsageResult,
+    #[serde(default)]
+    pub daily_usage: Vec<DashboardDailyUsagePoint>,
+    #[serde(default)]
+    pub users: Vec<DashboardUserUsageSummary>,
+    #[serde(default)]
+    pub openai_accounts: Vec<DashboardSourceUsageSummary>,
+    #[serde(default)]
+    pub aggregate_apis: Vec<DashboardSourceUsageSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardWalletResult {
+    pub id: String,
+    pub balance_credit_micros: i64,
+    pub frozen_credit_micros: i64,
+    pub available_credit_micros: i64,
+    pub status: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardApiKeySummary {
+    pub total_count: i64,
+    pub enabled_count: i64,
+    pub disabled_count: i64,
+    pub last_used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardUsageToday {
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+    pub total_count: i64,
+    pub success_count: i64,
+    pub error_count: i64,
+    pub success_rate: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardUsagePoint {
+    pub day_start_ts: i64,
+    pub day_end_ts: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardKeyUsage {
+    pub key_id: String,
+    pub name: Option<String>,
+    pub model_slug: Option<String>,
+    pub status: String,
+    pub today_tokens: i64,
+    pub today_cost_usd: f64,
+    pub total_tokens: i64,
+    pub total_cost_usd: f64,
+    pub last_used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardModelUsage {
+    pub model: String,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardAlert {
+    pub kind: String,
+    pub severity: String,
+    pub title: String,
+    pub message: String,
+    pub action_label: Option<String>,
+    pub action_href: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDashboardSummaryResult {
+    pub user_id: Option<String>,
+    pub distribution_enabled: bool,
+    pub wallet: Option<MemberDashboardWalletResult>,
+    pub api_key_summary: MemberDashboardApiKeySummary,
+    pub usage_today: MemberDashboardUsageToday,
+    #[serde(default)]
+    pub usage_trend_7d: Vec<MemberDashboardUsagePoint>,
+    #[serde(default)]
+    pub top_keys: Vec<MemberDashboardKeyUsage>,
+    #[serde(default)]
+    pub top_models: Vec<MemberDashboardModelUsage>,
+    #[serde(default)]
+    pub available_models: Vec<ModelInfo>,
+    #[serde(default)]
+    pub recent_logs: Vec<RequestLogSummary>,
+    #[serde(default)]
+    pub alerts: Vec<MemberDashboardAlert>,
 }
 
 #[cfg(test)]

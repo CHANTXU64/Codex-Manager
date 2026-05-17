@@ -253,6 +253,95 @@ export function createWebCommandMap(
         exportAccountsViaBrowser(postWebRpc, asRecord(params), options),
     },
     service_account_warmup: { rpcMethod: "account/warmup" },
+    service_account_manager_status: { rpcMethod: "accountManager/status" },
+    service_account_manager_session_current: {
+      rpcMethod: "accountManager/session/current",
+    },
+    service_account_manager_profile_update: {
+      rpcMethod: "accountManager/profile/update",
+    },
+    service_account_manager_password_change: {
+      rpcMethod: "accountManager/password/change",
+    },
+    service_account_manager_users_list: { rpcMethod: "accountManager/users/list" },
+    service_account_manager_user_create: {
+      rpcMethod: "accountManager/users/create",
+      mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
+    },
+    service_account_manager_user_update: {
+      rpcMethod: "accountManager/users/update",
+      mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
+    },
+    service_account_manager_user_delete: {
+      rpcMethod: "accountManager/users/delete",
+    },
+    service_account_manager_wallet_top_up: {
+      rpcMethod: "accountManager/wallet/topUp",
+      mapParams: (params) => {
+        const source = asRecord(params) ?? {};
+        return {
+          ownerKind: source.owner_kind ?? source.ownerKind,
+          ownerId: source.owner_id ?? source.ownerId,
+          amountCreditMicros:
+            source.amount_credit_micros ?? source.amountCreditMicros,
+          note: source.note,
+        };
+      },
+    },
+    service_account_manager_wallet_set_available: {
+      rpcMethod: "accountManager/wallet/setAvailable",
+      mapParams: (params) => {
+        const source = asRecord(params) ?? {};
+        return {
+          ownerKind: source.owner_kind ?? source.ownerKind,
+          ownerId: source.owner_id ?? source.ownerId,
+          availableCreditMicros:
+            source.available_credit_micros ?? source.availableCreditMicros,
+          note: source.note,
+        };
+      },
+    },
+    service_account_manager_api_key_owners_list: {
+      rpcMethod: "accountManager/apiKeyOwners/list",
+    },
+    service_account_manager_api_key_owner_set: {
+      rpcMethod: "accountManager/apiKeyOwners/set",
+      mapParams: (params) => {
+        const source = asRecord(params) ?? {};
+        return {
+          keyId: source.key_id ?? source.keyId,
+          ownerKind: source.owner_kind ?? source.ownerKind,
+          ownerUserId: source.owner_user_id ?? source.ownerUserId,
+          projectId: source.project_id ?? source.projectId,
+        };
+      },
+    },
+    service_model_groups_list: { rpcMethod: "modelGroups/list" },
+    service_model_group_save: { rpcMethod: "modelGroups/save" },
+    service_model_group_delete: { rpcMethod: "modelGroups/delete" },
+    service_model_group_models_set: { rpcMethod: "modelGroups/setModels" },
+    service_model_group_users_set: { rpcMethod: "modelGroups/setUsers" },
+    service_dashboard_admin_usage_summary: {
+      rpcMethod: "dashboard/adminUsageSummary",
+      mapParams: (params) => {
+        const source = asRecord(params) ?? {};
+        return {
+          startTs: source.start_ts ?? source.startTs,
+          endTs: source.end_ts ?? source.endTs,
+        };
+      },
+    },
+    service_dashboard_member_summary: {
+      rpcMethod: "dashboard/memberSummary",
+      mapParams: (params) => {
+        const source = asRecord(params) ?? {};
+        return {
+          userId: source.user_id ?? source.userId,
+          dayStartTs: source.day_start_ts ?? source.dayStartTs,
+          dayEndTs: source.day_end_ts ?? source.dayEndTs,
+        };
+      },
+    },
     service_usage_read: { rpcMethod: "account/usage/read" },
     service_usage_list: { rpcMethod: "account/usage/list" },
     service_usage_refresh: { rpcMethod: "account/usage/refresh" },
@@ -264,6 +353,64 @@ export function createWebCommandMap(
     service_quota_model_pools: { rpcMethod: "quota/modelPools" },
     service_quota_system_pool: { rpcMethod: "quota/systemPool" },
     service_quota_capacity_config: { rpcMethod: "quota/capacityConfig" },
+    service_quota_billing_rules: { rpcMethod: "quota/billingRules" },
+    service_quota_billing_rule_upsert: {
+      rpcMethod: "quota/billingRule/upsert",
+      mapParams: (params) => ({
+        id: typeof params?.id === "string" ? params.id : null,
+        name: typeof params?.name === "string" ? params.name : "",
+        status: typeof params?.status === "string" ? params.status : null,
+        priority: typeof params?.priority === "number" ? params.priority : null,
+        multiplierMillis:
+          typeof params?.multiplierMillis === "number"
+            ? params.multiplierMillis
+            : typeof params?.multiplier_millis === "number"
+              ? params.multiplier_millis
+              : 1000,
+        modelPattern:
+          typeof params?.modelPattern === "string"
+            ? params.modelPattern
+            : typeof params?.model_pattern === "string"
+              ? params.model_pattern
+              : null,
+        serviceTier:
+          typeof params?.serviceTier === "string"
+            ? params.serviceTier
+            : typeof params?.service_tier === "string"
+              ? params.service_tier
+              : null,
+        userId:
+          typeof params?.userId === "string"
+            ? params.userId
+            : typeof params?.user_id === "string"
+              ? params.user_id
+              : null,
+        apiKeyId:
+          typeof params?.apiKeyId === "string"
+            ? params.apiKeyId
+            : typeof params?.api_key_id === "string"
+              ? params.api_key_id
+              : null,
+        startsAt:
+          typeof params?.startsAt === "number"
+            ? params.startsAt
+            : typeof params?.starts_at === "number"
+              ? params.starts_at
+              : null,
+        endsAt:
+          typeof params?.endsAt === "number"
+            ? params.endsAt
+            : typeof params?.ends_at === "number"
+              ? params.ends_at
+              : null,
+      }),
+    },
+    service_quota_billing_rule_delete: {
+      rpcMethod: "quota/billingRule/delete",
+      mapParams: (params) => ({
+        id: typeof params?.id === "string" ? params.id : "",
+      }),
+    },
     service_quota_source_models_set: {
       rpcMethod: "quota/sourceModels/set",
       mapParams: (params) => ({
@@ -313,6 +460,19 @@ export function createWebCommandMap(
     },
     service_aggregate_api_refresh_balance: {
       rpcMethod: "aggregateApi/refreshBalance",
+    },
+    service_aggregate_api_supplier_models_list: {
+      rpcMethod: "aggregateApi/supplierModels/list",
+    },
+    service_aggregate_api_supplier_model_save: {
+      rpcMethod: "aggregateApi/supplierModels/save",
+      mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
+    },
+    service_aggregate_api_supplier_model_delete: {
+      rpcMethod: "aggregateApi/supplierModels/delete",
+    },
+    service_aggregate_api_supplier_models_import: {
+      rpcMethod: "aggregateApi/sourceModels/importSupplier",
     },
     service_login_start: {
       rpcMethod: "account/login/start",
@@ -368,6 +528,22 @@ export function createWebCommandMap(
       mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
     },
     service_model_catalog_delete: { rpcMethod: "apikey/modelCatalogDelete" },
+    service_model_routing: { rpcMethod: "apikey/modelRouting" },
+    service_model_source_sync: {
+      rpcMethod: "apikey/modelSourceSync",
+      mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
+    },
+    service_model_source_model_save: {
+      rpcMethod: "apikey/modelSourceModelSave",
+      mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
+    },
+    service_model_source_mapping_save: {
+      rpcMethod: "apikey/modelSourceMappingSave",
+      mapParams: (params) => asRecord(asRecord(params)?.payload) ?? {},
+    },
+    service_model_source_mapping_delete: {
+      rpcMethod: "apikey/modelSourceMappingDelete",
+    },
     service_apikey_read_secret: {
       rpcMethod: "apikey/readSecret",
       mapParams: mapKeyIdToId,
@@ -425,6 +601,19 @@ export function createWebCommandMap(
           throw new Error("当前环境不支持打开浏览器");
         }
         window.open(url, "_blank", "noopener,noreferrer");
+        return { ok: true };
+      },
+    },
+    open_external_url: {
+      direct: async (params) => {
+        const url = typeof params?.url === "string" ? params.url.trim() : "";
+        if (!url) {
+          throw new Error("缺少外部跳转地址");
+        }
+        if (typeof window === "undefined") {
+          throw new Error("当前环境不支持打开外部链接");
+        }
+        window.location.href = url;
         return { ok: true };
       },
     },

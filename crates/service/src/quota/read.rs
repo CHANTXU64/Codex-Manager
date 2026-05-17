@@ -2,19 +2,21 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::{Duration, Local, LocalResult, TimeZone};
 use codexmanager_core::rpc::types::{
-    AccountQuotaCapacityOverrideResult, AccountQuotaCapacityTemplateResult,
+    AccountQuotaCapacityOverrideResult, AccountQuotaCapacityTemplateResult, BillingRuleResult,
     QuotaAggregateApiOverviewResult, QuotaApiKeyModelUsageItem, QuotaApiKeyOverviewResult,
-    QuotaApiKeyUsageItem, QuotaApiKeyUsageResult, QuotaCapacityConfigResult, QuotaModelPoolItem,
-    QuotaModelPoolsResult, QuotaModelUsageItem, QuotaModelUsageResult,
-    QuotaOpenAiAccountOverviewResult, QuotaOverviewResult, QuotaPoolSourceBreakdown,
-    QuotaRefreshSourceResult, QuotaRefreshSourcesResult, QuotaSourceListResult,
-    QuotaSourceModelAssignmentResult, QuotaSourceSummary, QuotaSystemPoolResult,
-    QuotaTodayUsageResult,
+    QuotaApiKeyUsageItem, QuotaApiKeyUsageResult, QuotaBillingRulesResult,
+    QuotaCapacityConfigResult, QuotaModelPoolItem, QuotaModelPoolsResult, QuotaModelUsageItem,
+    QuotaModelUsageResult, QuotaOpenAiAccountOverviewResult, QuotaOverviewResult,
+    QuotaPoolSourceBreakdown, QuotaRefreshSourceResult, QuotaRefreshSourcesResult,
+    QuotaSourceListResult, QuotaSourceModelAssignmentResult, QuotaSourceSummary,
+    QuotaSystemPoolResult, QuotaTodayUsageResult,
 };
 use codexmanager_core::storage::{
     Account, AccountQuotaCapacityOverride, AccountQuotaCapacityTemplate, AccountSubscription,
-    AggregateApi, ApiKey, ModelPriceRule, QuotaSourceModelAssignment, Token, UsageSnapshotRecord,
+    AggregateApi, ApiKey, BillingRule, ModelPriceRule, QuotaSourceModelAssignment, Token,
+    UsageSnapshotRecord,
 };
+use rand::RngCore;
 use serde_json::Value;
 
 use super::model_pricing;
@@ -25,6 +27,22 @@ use crate::{refresh_aggregate_api_balance, storage_helpers::open_storage, usage_
 pub(crate) struct QuotaRefreshSourcesInput {
     pub(crate) kinds: Vec<String>,
     pub(crate) source_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BillingRuleUpsertInput {
+    pub(crate) id: Option<String>,
+    pub(crate) name: String,
+    pub(crate) status: Option<String>,
+    pub(crate) priority: Option<i64>,
+    pub(crate) multiplier_millis: i64,
+    pub(crate) model_pattern: Option<String>,
+    pub(crate) service_tier: Option<String>,
+    pub(crate) user_id: Option<String>,
+    pub(crate) project_id: Option<String>,
+    pub(crate) api_key_id: Option<String>,
+    pub(crate) starts_at: Option<i64>,
+    pub(crate) ends_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -144,6 +162,53 @@ fn key_display_name(key: &ApiKey) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or(key.id.as_str())
         .to_string()
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+}
+
+fn normalize_billing_status(value: Option<String>) -> Result<String, String> {
+    match normalize_optional_text(value)
+        .unwrap_or_else(|| "active".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "active" => Ok("active".to_string()),
+        "disabled" => Ok("disabled".to_string()),
+        _ => Err("计费规则状态只能是 active 或 disabled".to_string()),
+    }
+}
+
+fn generate_id(prefix: &str, bytes_len: usize) -> String {
+    let mut bytes = vec![0u8; bytes_len];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    format!("{prefix}_{hex}")
+}
+
+fn billing_rule_result(rule: BillingRule) -> BillingRuleResult {
+    BillingRuleResult {
+        id: rule.id,
+        name: rule.name,
+        status: rule.status,
+        priority: rule.priority,
+        multiplier_millis: rule.multiplier_millis,
+        model_pattern: rule.model_pattern,
+        service_tier: rule.service_tier,
+        user_id: rule.user_id,
+        project_id: rule.project_id,
+        api_key_id: rule.api_key_id,
+        starts_at: rule.starts_at,
+        ends_at: rule.ends_at,
+        created_at: rule.created_at,
+        updated_at: rule.updated_at,
+    }
 }
 
 pub(crate) fn read_quota_overview() -> Result<QuotaOverviewResult, String> {
@@ -285,6 +350,92 @@ pub(crate) fn read_quota_overview() -> Result<QuotaOverviewResult, String> {
             estimated_cost_usd: today.estimated_cost_usd.max(0.0),
         },
     })
+}
+
+pub(crate) fn read_billing_rules() -> Result<QuotaBillingRulesResult, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let items = storage
+        .list_billing_rules()
+        .map_err(|err| format!("list billing rules failed: {err}"))?
+        .into_iter()
+        .map(billing_rule_result)
+        .collect();
+    Ok(QuotaBillingRulesResult { items })
+}
+
+pub(crate) fn upsert_billing_rule(
+    input: BillingRuleUpsertInput,
+) -> Result<QuotaBillingRulesResult, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("计费规则名称不能为空".to_string());
+    }
+    let multiplier_millis = input.multiplier_millis;
+    if !(0..=100_000).contains(&multiplier_millis) {
+        return Err("计费倍率必须在 0 到 100 之间".to_string());
+    }
+    if let (Some(starts_at), Some(ends_at)) = (input.starts_at, input.ends_at) {
+        if starts_at >= ends_at {
+            return Err("计费规则结束时间必须晚于开始时间".to_string());
+        }
+    }
+    let user_id = normalize_optional_text(input.user_id);
+    if let Some(user_id) = user_id.as_deref() {
+        if storage
+            .find_app_user_by_id(user_id)
+            .map_err(|err| format!("read app user failed: {err}"))?
+            .is_none()
+        {
+            return Err("计费规则用户不存在".to_string());
+        }
+    }
+    let api_key_id = normalize_optional_text(input.api_key_id);
+    if let Some(api_key_id) = api_key_id.as_deref() {
+        if storage
+            .find_api_key_by_id(api_key_id)
+            .map_err(|err| format!("read api key failed: {err}"))?
+            .is_none()
+        {
+            return Err("计费规则 API Key 不存在".to_string());
+        }
+    }
+    let project_id = normalize_optional_text(input.project_id);
+    if project_id.is_some() {
+        return Err("项目维度计费规则暂未开放".to_string());
+    }
+    let now = codexmanager_core::storage::now_ts();
+    storage
+        .upsert_billing_rule(&BillingRule {
+            id: normalize_optional_text(input.id).unwrap_or_else(|| generate_id("br", 8)),
+            name: name.to_string(),
+            status: normalize_billing_status(input.status)?,
+            priority: input.priority.unwrap_or(0),
+            multiplier_millis,
+            model_pattern: normalize_optional_text(input.model_pattern),
+            service_tier: normalize_optional_text(input.service_tier),
+            user_id,
+            project_id: None,
+            api_key_id,
+            starts_at: input.starts_at.filter(|value| *value > 0),
+            ends_at: input.ends_at.filter(|value| *value > 0),
+            created_at: now,
+            updated_at: now,
+        })
+        .map_err(|err| format!("save billing rule failed: {err}"))?;
+    read_billing_rules()
+}
+
+pub(crate) fn delete_billing_rule(id: &str) -> Result<QuotaBillingRulesResult, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("计费规则 ID 不能为空".to_string());
+    }
+    storage
+        .delete_billing_rule(id)
+        .map_err(|err| format!("delete billing rule failed: {err}"))?;
+    read_billing_rules()
 }
 
 pub(crate) fn read_quota_model_usage(

@@ -62,6 +62,59 @@ pub async fn service_quota_capacity_config(
 }
 
 #[tauri::command]
+pub async fn service_quota_billing_rules(addr: Option<String>) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("quota/billingRules", addr, None).await
+}
+
+#[tauri::command]
+pub async fn service_quota_billing_rule_upsert(
+    addr: Option<String>,
+    id: Option<String>,
+    name: String,
+    status: Option<String>,
+    priority: Option<i64>,
+    multiplier_millis: i64,
+    model_pattern: Option<String>,
+    service_tier: Option<String>,
+    user_id: Option<String>,
+    api_key_id: Option<String>,
+    starts_at: Option<i64>,
+    ends_at: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background(
+        "quota/billingRule/upsert",
+        addr,
+        Some(serde_json::json!({
+            "id": id,
+            "name": name,
+            "status": status,
+            "priority": priority,
+            "multiplierMillis": multiplier_millis,
+            "modelPattern": model_pattern,
+            "serviceTier": service_tier,
+            "userId": user_id,
+            "apiKeyId": api_key_id,
+            "startsAt": starts_at,
+            "endsAt": ends_at,
+        })),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn service_quota_billing_rule_delete(
+    addr: Option<String>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background(
+        "quota/billingRule/delete",
+        addr,
+        Some(serde_json::json!({ "id": id })),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn service_quota_source_models_set(
     addr: Option<String>,
     source_kind: String,

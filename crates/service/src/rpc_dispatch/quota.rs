@@ -1,6 +1,6 @@
 use codexmanager_core::rpc::types::{JsonRpcRequest, JsonRpcResponse};
 
-use crate::quota::read::{self, QuotaRefreshSourcesInput};
+use crate::quota::read::{self, BillingRuleUpsertInput, QuotaRefreshSourcesInput};
 
 fn string_array_param(req: &JsonRpcRequest, key: &str) -> Vec<String> {
     req.params
@@ -35,6 +35,27 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
             super::value_or_error(read::read_quota_system_pool(reference_model))
         }
         "quota/capacityConfig" => super::value_or_error(read::read_quota_capacity_config()),
+        "quota/billingRules" => super::value_or_error(read::read_billing_rules()),
+        "quota/billingRule/upsert" => {
+            super::value_or_error(read::upsert_billing_rule(BillingRuleUpsertInput {
+                id: super::string_param(req, "id"),
+                name: super::str_param(req, "name").unwrap_or("").to_string(),
+                status: super::string_param(req, "status"),
+                priority: super::i64_param(req, "priority"),
+                multiplier_millis: super::i64_param(req, "multiplierMillis").unwrap_or(1_000),
+                model_pattern: super::string_param(req, "modelPattern"),
+                service_tier: super::string_param(req, "serviceTier"),
+                user_id: super::string_param(req, "userId"),
+                project_id: super::string_param(req, "projectId"),
+                api_key_id: super::string_param(req, "apiKeyId"),
+                starts_at: super::i64_param(req, "startsAt"),
+                ends_at: super::i64_param(req, "endsAt"),
+            }))
+        }
+        "quota/billingRule/delete" => {
+            let id = super::str_param(req, "id").unwrap_or("");
+            super::value_or_error(read::delete_billing_rule(id))
+        }
         "quota/sourceModels/set" => {
             let source_kind = super::str_param(req, "sourceKind").unwrap_or("");
             let source_id = super::str_param(req, "sourceId").unwrap_or("");

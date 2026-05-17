@@ -412,7 +412,7 @@ pub(crate) fn load_enabled_price_rules(storage: &Storage) -> Result<Vec<ModelPri
         .map_err(|err| format!("list enabled model price rules failed: {err}"))
 }
 
-fn wildcard_matches(pattern: &str, value: &str) -> bool {
+pub(crate) fn wildcard_matches(pattern: &str, value: &str) -> bool {
     if pattern == "*" {
         return true;
     }

@@ -1,6 +1,6 @@
 use rusqlite::{params, Result, Row};
 
-use super::{now_ts, AggregateApi, Storage};
+use super::{now_ts, AggregateApi, AggregateApiSupplierModel, Storage};
 
 const AGGREGATE_API_SELECT_SQL: &str = "SELECT
     id,
@@ -630,6 +630,92 @@ impl Storage {
         )?;
         Ok(())
     }
+
+    pub(super) fn ensure_aggregate_api_supplier_model_tables(&self) -> Result<()> {
+        self.conn.execute_batch(include_str!(
+            "../../migrations/059_aggregate_api_supplier_models.sql"
+        ))
+    }
+
+    pub fn list_aggregate_api_supplier_models(
+        &self,
+        supplier_key: Option<&str>,
+        provider_type: Option<&str>,
+    ) -> Result<Vec<AggregateApiSupplierModel>> {
+        let supplier_key = supplier_key
+            .map(normalize_supplier_model_text)
+            .filter(|value| !value.is_empty());
+        let provider_type = provider_type
+            .map(normalize_supplier_model_text)
+            .filter(|value| !value.is_empty());
+        let mut stmt = self.conn.prepare(
+            "SELECT supplier_key, provider_type, upstream_model, display_name,
+                    status, created_at, updated_at
+             FROM aggregate_api_supplier_models
+             ORDER BY supplier_key ASC, provider_type ASC, upstream_model ASC",
+        )?;
+        let rows = stmt.query_map([], map_aggregate_api_supplier_model_row)?;
+        let mut items = Vec::new();
+        for row in rows {
+            let item = row?;
+            if let Some(value) = supplier_key.as_deref() {
+                if item.supplier_key != value {
+                    continue;
+                }
+            }
+            if let Some(value) = provider_type.as_deref() {
+                if item.provider_type != value {
+                    continue;
+                }
+            }
+            items.push(item);
+        }
+        Ok(items)
+    }
+
+    pub fn upsert_aggregate_api_supplier_model(
+        &self,
+        model: &AggregateApiSupplierModel,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO aggregate_api_supplier_models (
+                supplier_key, provider_type, upstream_model, display_name,
+                status, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(supplier_key, provider_type, upstream_model) DO UPDATE SET
+                display_name = excluded.display_name,
+                status = excluded.status,
+                updated_at = excluded.updated_at",
+            params![
+                &model.supplier_key,
+                &model.provider_type,
+                &model.upstream_model,
+                &model.display_name,
+                &model.status,
+                model.created_at,
+                model.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_aggregate_api_supplier_model(
+        &self,
+        supplier_key: &str,
+        provider_type: &str,
+        upstream_model: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM aggregate_api_supplier_models
+             WHERE supplier_key = ?1 AND provider_type = ?2 AND upstream_model = ?3",
+            params![
+                normalize_supplier_model_text(supplier_key),
+                normalize_supplier_model_text(provider_type),
+                normalize_supplier_model_text(upstream_model),
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 /// 函数 `map_aggregate_api_row`
@@ -670,4 +756,71 @@ fn map_aggregate_api_row(row: &Row<'_>) -> Result<AggregateApi> {
         last_balance_error: row.get(22)?,
         last_balance_json: row.get(23)?,
     })
+}
+
+fn map_aggregate_api_supplier_model_row(row: &Row<'_>) -> Result<AggregateApiSupplierModel> {
+    Ok(AggregateApiSupplierModel {
+        supplier_key: row.get(0)?,
+        provider_type: row.get(1)?,
+        upstream_model: row.get(2)?,
+        display_name: row.get(3)?,
+        status: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+fn normalize_supplier_model_text(value: &str) -> String {
+    value.trim().to_string()
+}
+
+#[cfg(test)]
+mod supplier_model_tests {
+    use super::*;
+
+    #[test]
+    fn supplier_models_can_be_upserted_listed_and_deleted() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage
+            .ensure_aggregate_api_supplier_model_tables()
+            .expect("ensure tables");
+        let now = now_ts();
+        let model = AggregateApiSupplierModel {
+            supplier_key: "test-supplier".to_string(),
+            provider_type: "codex".to_string(),
+            upstream_model: "provider-model".to_string(),
+            display_name: Some("Provider Model".to_string()),
+            status: "available".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        storage
+            .upsert_aggregate_api_supplier_model(&model)
+            .expect("upsert model");
+        let items = storage
+            .list_aggregate_api_supplier_models(Some("test-supplier"), Some("codex"))
+            .expect("list models");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].upstream_model, "provider-model");
+
+        let mut disabled = model.clone();
+        disabled.status = "disabled".to_string();
+        disabled.updated_at = now + 1;
+        storage
+            .upsert_aggregate_api_supplier_model(&disabled)
+            .expect("update model");
+        let items = storage
+            .list_aggregate_api_supplier_models(Some("test-supplier"), Some("codex"))
+            .expect("list updated models");
+        assert_eq!(items[0].status, "disabled");
+
+        storage
+            .delete_aggregate_api_supplier_model("test-supplier", "codex", "provider-model")
+            .expect("delete model");
+        let items = storage
+            .list_aggregate_api_supplier_models(Some("test-supplier"), Some("codex"))
+            .expect("list deleted models");
+        assert!(items.is_empty());
+    }
 }
