@@ -130,6 +130,70 @@ fn member_actor_cannot_call_admin_only_rpc() {
 }
 
 #[test]
+fn password_mode_can_call_admin_and_model_source_rpcs() {
+    let _guard = test_env_guard();
+    let db_path = setup_dashboard_test_db("codexmanager-password-model-source-rpc");
+    set_web_access_password(Some("password123")).expect("set web password");
+    set_web_auth_mode("password").expect("enable password mode");
+    let actor = RpcActor::from_parts(Some(ROLE_MEMBER), Some("password-mode-user"));
+
+    let admin_resp = response_result(handle_request_with_actor(
+        JsonRpcRequest {
+            id: 22.into(),
+            method: "accountManager/users/list".to_string(),
+            params: None,
+            trace: None,
+        },
+        actor.clone(),
+    ));
+    let admin_err = rpc_error(&admin_resp);
+    assert!(
+        !admin_err.contains("permission_denied"),
+        "password mode unexpectedly denied accountManager/users/list: {admin_err}"
+    );
+
+    for (method, params) in [
+        (
+            "apikey/modelSourceSync",
+            serde_json::json!({ "sourceKind": "aggregate_api" }),
+        ),
+        (
+            "apikey/modelSourceModelSave",
+            serde_json::json!({
+                "sourceKind": "aggregate_api",
+                "sourceId": "ag_test",
+                "upstreamModel": "gpt-4o"
+            }),
+        ),
+        (
+            "apikey/modelSourceMappingSave",
+            serde_json::json!({
+                "platformModelSlug": "gpt-4o",
+                "sourceKind": "aggregate_api",
+                "sourceId": "ag_test",
+                "upstreamModel": "gpt-4o"
+            }),
+        ),
+        (
+            "apikey/modelSourceMappingDelete",
+            serde_json::json!({ "id": "map_test" }),
+        ),
+    ] {
+        let resp = response_result(handle_request_with_actor(
+            rpc_request(method, params),
+            actor.clone(),
+        ));
+        let err = rpc_error(&resp);
+        assert!(
+            !err.contains("permission_denied"),
+            "{method} unexpectedly denied: {err}"
+        );
+    }
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
 fn admin_user_update_edits_member_and_protects_last_active_admin() {
     let _guard = test_env_guard();
     let db_path = setup_dashboard_test_db("codexmanager-user-update");

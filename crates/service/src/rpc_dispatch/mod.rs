@@ -180,31 +180,45 @@ fn permission_denied(method: &str) -> String {
     format!("permission_denied: {method}")
 }
 
+const MEMBER_METHOD_ALLOWLIST: &[&str] = &[
+    "account/chatgptAuthTokens/refresh",
+    "account/chatgptAuthTokens/refreshAll",
+    "account/list",
+    "account/read",
+    "account/update",
+    "account/usage/aggregate",
+    "account/usage/list",
+    "account/usage/read",
+    "account/usage/refresh",
+    "account/warmup",
+    "accountManager/password/change",
+    "accountManager/profile/update",
+    "accountManager/session/current",
+    "accountManager/status",
+    "apikey/create",
+    "apikey/delete",
+    "apikey/disable",
+    "apikey/enable",
+    "apikey/list",
+    "apikey/modelCatalogList",
+    "apikey/modelRouting",
+    "apikey/models",
+    "apikey/readSecret",
+    "apikey/updateModel",
+    "apikey/usageStats",
+    "appSettings/get",
+    "dashboard/memberSummary",
+    "requestlog/list",
+    "requestlog/summary",
+    "requestlog/today_summary",
+    "startup/snapshot",
+];
+
 fn member_method_allowed(method: &str) -> bool {
-    matches!(
-        method,
-        "accountManager/status"
-            | "accountManager/session/current"
-            | "accountManager/profile/update"
-            | "accountManager/password/change"
-            | "appSettings/get"
-            | "dashboard/memberSummary"
-            | "apikey/list"
-            | "apikey/create"
-            | "apikey/readSecret"
-            | "apikey/models"
-            | "apikey/modelCatalogList"
-            | "apikey/modelRouting"
-            | "apikey/usageStats"
-            | "apikey/updateModel"
-            | "apikey/delete"
-            | "apikey/disable"
-            | "apikey/enable"
-            | "requestlog/list"
-            | "requestlog/summary"
-            | "requestlog/today_summary"
-            | "startup/snapshot"
-    )
+    if crate::current_web_auth_mode() == "password" {
+        return true;
+    }
+    MEMBER_METHOD_ALLOWLIST.contains(&method)
 }
 
 fn ensure_method_allowed(actor: &RpcActor, method: &str) -> Result<(), String> {

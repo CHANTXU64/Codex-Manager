@@ -3,7 +3,7 @@ use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Serialize;
 use serde_json::json;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -19,7 +19,6 @@ const WARMUP_UPSTREAM_URL: &str = "https://chatgpt.com/backend-api/codex/respons
 const DEFAULT_WARMUP_MODEL: &str = "gpt-5.3-codex";
 const WARMUP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const WARMUP_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
-const WARMUP_STREAM_MAX_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,7 +179,6 @@ fn warmup_single_account(
 
             match outcome {
                 Ok(ok_message) => {
-                    let _ = crate::usage_refresh::enqueue_usage_refresh_for_account(&account.id);
                     persist_warmup_observability(
                         storage,
                         &account,
@@ -190,6 +188,7 @@ fn warmup_single_account(
                         started_at.elapsed().as_millis() as i64,
                         ok_message.as_str(),
                     );
+                    let _ = crate::usage_refresh::enqueue_usage_refresh_for_account(&account.id);
                     AccountWarmupItemResult {
                         account_id: account.id,
                         account_name,
@@ -380,12 +379,12 @@ fn send_warmup_request(
         .send()
         .map_err(|err| format!("warmup request failed: {err}"))?;
 
-    if response.status().is_success() {
-        return drain_warmup_response_stream(response);
-    }
-
     let status = response.status();
     let headers = response.headers().clone();
+    if status.is_success() {
+        return consume_warmup_stream(response);
+    }
+
     let body_text = response.text().unwrap_or_default();
     Err(summarize_warmup_error(
         status.as_u16(),
@@ -394,257 +393,133 @@ fn send_warmup_request(
     ))
 }
 
-fn drain_warmup_response_stream(response: reqwest::blocking::Response) -> Result<(), String> {
-    let mut reader = BufReader::new(response);
-    let mut frame_lines = Vec::new();
-    let mut total_bytes = 0usize;
-    let mut saw_data = false;
-    let mut last_event_type: Option<String> = None;
+fn consume_warmup_stream<R: Read>(reader: R) -> Result<(), String> {
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+    let mut event_name: Option<String> = None;
+    let mut data_lines: Vec<String> = Vec::new();
 
     loop {
-        let mut line = String::new();
-        let read = reader
+        line.clear();
+        let bytes = reader
             .read_line(&mut line)
             .map_err(|err| format!("warmup stream read failed: {err}"))?;
-        if read == 0 {
-            if !frame_lines.is_empty() {
-                match inspect_warmup_sse_frame(&frame_lines) {
-                    WarmupSseFrameResult::Completed => return Ok(()),
-                    WarmupSseFrameResult::Failed(message) => return Err(message),
-                    WarmupSseFrameResult::Continue {
-                        saw_data: frame_saw_data,
-                        event_type,
-                    } => {
-                        saw_data |= frame_saw_data;
-                        if let Some(event_type) = event_type {
-                            last_event_type = Some(event_type);
-                        }
-                    }
-                }
+        if bytes == 0 {
+            if process_warmup_sse_event(event_name.as_deref(), &data_lines)? {
+                return Ok(());
             }
-            return if saw_data {
-                Err(match last_event_type {
-                    Some(event_type) => {
-                        format!("warmup stream ended before completion; last_event={event_type}")
-                    }
-                    None => "warmup stream ended before completion".to_string(),
-                })
-            } else {
-                Err("warmup stream ended without data".to_string())
-            };
+            return Err("warmup stream ended before response.completed".to_string());
         }
 
-        total_bytes = total_bytes.saturating_add(read);
-        if total_bytes > WARMUP_STREAM_MAX_BYTES {
-            return Err("warmup stream exceeded max bytes before completion".to_string());
-        }
-
-        let is_blank = line == "\n" || line == "\r\n";
-        frame_lines.push(line);
-        if !is_blank {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            if process_warmup_sse_event(event_name.as_deref(), &data_lines)? {
+                return Ok(());
+            }
+            event_name = None;
+            data_lines.clear();
             continue;
         }
-
-        match inspect_warmup_sse_frame(&frame_lines) {
-            WarmupSseFrameResult::Completed => return Ok(()),
-            WarmupSseFrameResult::Failed(message) => return Err(message),
-            WarmupSseFrameResult::Continue {
-                saw_data: frame_saw_data,
-                event_type,
-            } => {
-                saw_data |= frame_saw_data;
-                if let Some(event_type) = event_type {
-                    last_event_type = Some(event_type);
-                }
-            }
+        if let Some(value) = trimmed.strip_prefix("event:") {
+            event_name = Some(value.trim().to_string());
+            continue;
         }
-        frame_lines.clear();
+        if let Some(value) = trimmed.strip_prefix("data:") {
+            data_lines.push(value.trim().to_string());
+        }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum WarmupSseFrameResult {
-    Completed,
-    Failed(String),
-    Continue {
-        saw_data: bool,
-        event_type: Option<String>,
-    },
-}
-
-fn inspect_warmup_sse_frame(lines: &[String]) -> WarmupSseFrameResult {
-    let event_name = sse_event_name(lines);
-    if let Some(event_name) = event_name.as_deref() {
-        match classify_warmup_terminal_event(event_name, None) {
-            WarmupTerminalEvent::Completed => return WarmupSseFrameResult::Completed,
-            WarmupTerminalEvent::Failed(_) | WarmupTerminalEvent::Continue => {}
+fn process_warmup_sse_event(
+    event_name: Option<&str>,
+    data_lines: &[String],
+) -> Result<bool, String> {
+    let event_name = event_name.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(event) = event_name {
+        if is_warmup_terminal_event(event) {
+            return Ok(true);
         }
     }
 
-    let Some(data) = sse_data_payload(lines) else {
-        if let Some(event_name) = event_name.as_deref() {
-            if let WarmupTerminalEvent::Failed(message) =
-                classify_warmup_terminal_event(event_name, None)
-            {
-                return WarmupSseFrameResult::Failed(message);
+    if data_lines.is_empty() {
+        if let Some(event) = event_name {
+            if is_warmup_error_event(event) {
+                return Err(format!("warmup stream error event: {event}"));
             }
         }
-        return WarmupSseFrameResult::Continue {
-            saw_data: false,
-            event_type: event_name,
-        };
-    };
+        return Ok(false);
+    }
+    let data = data_lines.join("\n");
     let trimmed = data.trim();
-    if trimmed.is_empty() {
-        if let Some(event_name) = event_name.as_deref() {
-            if let WarmupTerminalEvent::Failed(message) =
-                classify_warmup_terminal_event(event_name, None)
-            {
-                return WarmupSseFrameResult::Failed(message);
-            }
-        }
-        return WarmupSseFrameResult::Continue {
-            saw_data: false,
-            event_type: event_name,
-        };
-    }
     if trimmed == "[DONE]" {
-        return WarmupSseFrameResult::Completed;
+        return Ok(true);
     }
-
     let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return WarmupSseFrameResult::Continue {
-            saw_data: true,
-            event_type: event_name,
-        };
+        return Ok(false);
     };
-
-    if let Some(message) = extract_warmup_error_message(&value) {
-        return WarmupSseFrameResult::Failed(message);
-    }
-
-    let event_type = event_name.or_else(|| {
-        value
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    });
-    if let Some(event_type) = event_type.as_deref() {
-        match classify_warmup_terminal_event(event_type, Some(&value)) {
-            WarmupTerminalEvent::Completed => return WarmupSseFrameResult::Completed,
-            WarmupTerminalEvent::Failed(message) => return WarmupSseFrameResult::Failed(message),
-            WarmupTerminalEvent::Continue => {}
+    let event_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .or(event_name);
+    if let Some(event_type) = event_type {
+        if is_warmup_terminal_event(event_type) {
+            return Ok(true);
+        }
+        if is_warmup_error_event(event_type) {
+            return Err(format!(
+                "warmup stream error event: {}; {}",
+                event_type,
+                summarize_warmup_stream_error(&value)
+            ));
         }
     }
-
-    WarmupSseFrameResult::Continue {
-        saw_data: true,
-        event_type,
-    }
-}
-
-enum WarmupTerminalEvent {
-    Completed,
-    Failed(String),
-    Continue,
-}
-
-fn classify_warmup_terminal_event(
-    raw: &str,
-    value: Option<&serde_json::Value>,
-) -> WarmupTerminalEvent {
-    let normalized = raw.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return WarmupTerminalEvent::Continue;
-    }
-    if normalized == "done"
-        || normalized == "response.completed"
-        || normalized == "response.done"
-        || normalized.ends_with(".completed")
-    {
-        return WarmupTerminalEvent::Completed;
-    }
-    if normalized == "error"
-        || normalized == "response.failed"
-        || normalized.ends_with(".failed")
-        || normalized.ends_with(".error")
-        || normalized.ends_with(".canceled")
-        || normalized.ends_with(".cancelled")
-        || normalized.ends_with(".incomplete")
-    {
-        return WarmupTerminalEvent::Failed(
-            value
-                .and_then(extract_warmup_error_message)
-                .unwrap_or_else(|| format!("warmup stream terminal event: {normalized}")),
-        );
-    }
-    WarmupTerminalEvent::Continue
-}
-
-fn sse_event_name(lines: &[String]) -> Option<String> {
-    lines.iter().find_map(|line| {
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        trimmed.strip_prefix("event:").and_then(|rest| {
-            let value = rest.trim();
-            (!value.is_empty()).then(|| value.to_string())
-        })
-    })
-}
-
-fn sse_data_payload(lines: &[String]) -> Option<String> {
-    let data_lines = lines
-        .iter()
-        .filter_map(|line| {
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            trimmed
-                .strip_prefix("data:")
-                .map(|rest| rest.trim_start().to_string())
-        })
-        .collect::<Vec<_>>();
-    (!data_lines.is_empty()).then(|| data_lines.join("\n"))
-}
-
-fn extract_warmup_error_message(value: &serde_json::Value) -> Option<String> {
-    let candidates = [
-        "/error/message",
-        "/response/error/message",
-        "/response/status_details/error/message",
-        "/response/status_details/message",
-        "/message",
-    ];
-    for pointer in candidates {
-        if let Some(message) = value
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|message| !message.is_empty())
-        {
-            return Some(message.to_string());
+    if let Some(event) = event_name {
+        if is_warmup_error_event(event) {
+            return Err(format!("warmup stream error event: {event}"));
         }
     }
+    Ok(false)
+}
 
+fn is_warmup_terminal_event(value: &str) -> bool {
+    matches!(value.trim(), "response.completed" | "response.done")
+}
+
+fn is_warmup_error_event(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "error" | "response.failed" | "response.incomplete"
+    )
+}
+
+fn summarize_warmup_stream_error(value: &serde_json::Value) -> String {
     value
         .get("error")
-        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("response").and_then(|response| response.get("error")))
+        .and_then(|error| {
+            error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| error.as_str())
+        })
         .map(str::trim)
         .filter(|message| !message.is_empty())
-        .map(str::to_string)
+        .unwrap_or("unknown stream error")
+        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_warmup_headers, inspect_warmup_sse_frame, resolve_target_accounts,
-        resolve_warmup_model_slug, should_retry_warmup_with_refresh, WarmupSseFrameResult,
-        DEFAULT_WARMUP_MODEL,
+        build_warmup_headers, consume_warmup_stream, resolve_target_accounts,
+        resolve_warmup_model_slug, should_retry_warmup_with_refresh, DEFAULT_WARMUP_MODEL,
     };
     use crate::apikey_models::save_managed_model_catalog_with_storage;
     use codexmanager_core::rpc::types::{
         ManagedModelCatalogEntry, ManagedModelCatalogResult, ModelInfo,
     };
     use codexmanager_core::storage::{now_ts, Account, Storage, Token};
+    use std::io::Cursor;
 
     fn make_model(slug: &str, sort_index: i64, supported_in_api: bool) -> ManagedModelCatalogEntry {
         ManagedModelCatalogEntry {
@@ -657,10 +532,6 @@ mod tests {
             sort_index,
             ..ManagedModelCatalogEntry::default()
         }
-    }
-
-    fn sse_lines(lines: &[&str]) -> Vec<String> {
-        lines.iter().map(|line| format!("{line}\n")).collect()
     }
 
     #[test]
@@ -797,58 +668,37 @@ mod tests {
     }
 
     #[test]
-    fn inspect_warmup_sse_frame_requires_terminal_completion() {
-        let frame = sse_lines(&[
-            "event: response.created",
-            r#"data: {"type":"response.created","response":{"id":"resp_1"}}"#,
-            "",
-        ]);
-
-        assert_eq!(
-            inspect_warmup_sse_frame(&frame),
-            WarmupSseFrameResult::Continue {
-                saw_data: true,
-                event_type: Some("response.created".to_string())
-            }
+    fn consume_warmup_stream_waits_for_response_completed() {
+        let stream = Cursor::new(
+            "event: response.created\n\
+             data: {\"type\":\"response.created\"}\n\n\
+             event: response.completed\n\
+             data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n",
         );
+
+        assert!(consume_warmup_stream(stream).is_ok());
     }
 
     #[test]
-    fn inspect_warmup_sse_frame_accepts_completed_event() {
-        let frame = sse_lines(&[
-            "event: response.completed",
-            r#"data: {"type":"response.completed","response":{"id":"resp_1"}}"#,
-            "",
-        ]);
-
-        assert_eq!(
-            inspect_warmup_sse_frame(&frame),
-            WarmupSseFrameResult::Completed
+    fn consume_warmup_stream_rejects_incomplete_stream() {
+        let stream = Cursor::new(
+            "event: response.created\n\
+             data: {\"type\":\"response.created\"}\n\n",
         );
+
+        let err = consume_warmup_stream(stream).expect_err("stream should be incomplete");
+        assert!(err.contains("before response.completed"));
     }
 
     #[test]
-    fn inspect_warmup_sse_frame_accepts_done_marker() {
-        let frame = sse_lines(&["data: [DONE]", ""]);
-
-        assert_eq!(
-            inspect_warmup_sse_frame(&frame),
-            WarmupSseFrameResult::Completed
+    fn consume_warmup_stream_reports_error_event() {
+        let stream = Cursor::new(
+            "event: response.failed\n\
+             data: {\"type\":\"response.failed\",\"error\":{\"message\":\"quota exceeded\"}}\n\n",
         );
-    }
 
-    #[test]
-    fn inspect_warmup_sse_frame_extracts_failed_message_from_body() {
-        let frame = sse_lines(&[
-            "event: response.failed",
-            r#"data: {"type":"response.failed","response":{"error":{"message":"model unavailable"}}}"#,
-            "",
-        ]);
-
-        assert_eq!(
-            inspect_warmup_sse_frame(&frame),
-            WarmupSseFrameResult::Failed("model unavailable".to_string())
-        );
+        let err = consume_warmup_stream(stream).expect_err("stream should fail");
+        assert!(err.contains("quota exceeded"));
     }
 }
 
