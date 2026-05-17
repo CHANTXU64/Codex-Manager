@@ -101,8 +101,18 @@ fn derive_status_for_log(
 fn should_mark_stream_failure_cooldown(
     upstream_stream_failed: bool,
     client_delivery_failed: bool,
+    final_error: Option<&str>,
 ) -> bool {
-    upstream_stream_failed && !client_delivery_failed
+    if !upstream_stream_failed || client_delivery_failed {
+        return false;
+    }
+    if final_error.is_some_and(|error| {
+        super::super::super::active_account::is_client_disconnect_error(error)
+            || super::super::super::active_account::is_transient_error(error)
+    }) {
+        return false;
+    }
+    true
 }
 
 /// 函数 `respond_total_timeout`
@@ -284,7 +294,11 @@ pub(super) fn finalize_upstream_response(
         client_delivery_failed,
     );
 
-    if should_mark_stream_failure_cooldown(upstream_stream_failed, client_delivery_failed) {
+    if should_mark_stream_failure_cooldown(
+        upstream_stream_failed,
+        client_delivery_failed,
+        final_error.as_deref(),
+    ) {
         super::super::super::mark_account_cooldown(
             account_id,
             super::super::super::CooldownReason::Network,
@@ -413,8 +427,18 @@ mod tests {
 
     #[test]
     fn stream_failure_cooldown_ignores_client_disconnects() {
-        assert!(!should_mark_stream_failure_cooldown(true, true));
-        assert!(should_mark_stream_failure_cooldown(true, false));
-        assert!(!should_mark_stream_failure_cooldown(false, true));
+        assert!(!should_mark_stream_failure_cooldown(true, true, None));
+        assert!(should_mark_stream_failure_cooldown(true, false, None));
+        assert!(!should_mark_stream_failure_cooldown(false, true, None));
+        assert!(!should_mark_stream_failure_cooldown(
+            true,
+            false,
+            Some("连接中断（可能是网络波动或客户端主动取消）")
+        ));
+        assert!(!should_mark_stream_failure_cooldown(
+            true,
+            false,
+            Some("Transport error: error decoding response body")
+        ));
     }
 }

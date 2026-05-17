@@ -303,7 +303,7 @@ sticky 未超过 ACTIVE_ACCOUNT_MAX_STICKY_SECS
 
 ```text
 ACTIVE_ACCOUNT_IDLE_TTL_SECS = 3600      # 空闲 1 小时后重新评估
-ACTIVE_ACCOUNT_MAX_STICKY_SECS = 14400   # 连续固定 4 小时后重新评估
+ACTIVE_ACCOUNT_MAX_STICKY_SECS = 57600   # 连续固定 16 小时后重新评估
 MAX_CONSECUTIVE_REAL_ERRORS = 3
 ```
 
@@ -446,7 +446,7 @@ crates/core/migrations/057_api_key_active_accounts.sql
 ```text
 每个 API Key 独立维护 active_account_id；
 活跃时固定一个账号以最大化缓存；
-空闲 1 小时或连续固定 4 小时后重新评估；
+空闲 1 小时或连续固定 16 小时后重新评估；
 重新评估时优先使用 weekly 快到期且剩余额度多、同时 5h 仍可用的账号；
 一次外部请求只尝试一个 active account；
 真实失败累计 3 次后清 active account；

@@ -95,6 +95,14 @@
 - client disconnect、用户中断、broken pipe、stream interrupted 等下游断开不惩罚账号，不增加连续真实错误，不触发 cooldown。
 - conversation binding、prompt cache key、previous response、model 等信息可以作为协议兼容存在，但不得覆盖 active account 的账号选择结果。
 
+本次加固：
+
+- active account 连续固定重新评估时间从 4 小时改为 16 小时，即 `ACTIVE_ACCOUNT_MAX_STICKY_SECS = 57600`。
+- HTTP `502` 与 `500` 一样，会在进入最终 failover/返回前先对原账号静默重试一次。
+- 将 `error sending request`、`error decoding response body`、`read upstream body failed`、`connection interrupted`、`连接中断`、`网络波动` 等 transport / stream transient 错误纳入 active account 真实错误分类。
+- transport / stream transient 错误不会立刻给账号打 network cooldown，也不会因此在下一次请求直接跳到其他账号；仍由 active account 的连续真实错误计数控制，达到阈值后才清除 active account。
+- 客户端主动断开仍按下游断开处理，不计入账号失败，不触发 cooldown。
+
 合并上游时重点保护：`active_account.rs` 的选择/记录逻辑、候选列表 `truncate(1)` 行为、exhausted/final 503 路径的结果记账、客户端断开不惩罚账号、以及 conversation binding 不参与账号排序。
 
 ### LOC 统计

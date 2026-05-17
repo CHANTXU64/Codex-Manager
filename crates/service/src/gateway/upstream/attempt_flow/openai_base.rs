@@ -68,21 +68,26 @@ where
             UpstreamOutcomeDecision::RespondUpstream => OpenAiAttemptResult::Upstream(resp.into()),
         },
         Ok(None) => {
-            super::super::super::mark_account_cooldown(
-                &account.id,
-                super::super::super::CooldownReason::Network,
-            );
-            log_gateway_result(Some(base), 502, Some("openai upstream unavailable"));
+            let message = "openai upstream unavailable";
+            if !super::super::super::active_account::is_transient_error(message) {
+                super::super::super::mark_account_cooldown(
+                    &account.id,
+                    super::super::super::CooldownReason::Network,
+                );
+            }
+            log_gateway_result(Some(base), 502, Some(message));
             OpenAiAttemptResult::Terminal {
                 status_code: 502,
-                message: "openai upstream unavailable".to_string(),
+                message: message.to_string(),
             }
         }
         Err(err) => {
-            super::super::super::mark_account_cooldown(
-                &account.id,
-                super::super::super::CooldownReason::Network,
-            );
+            if !super::super::super::active_account::is_transient_error(err.as_str()) {
+                super::super::super::mark_account_cooldown(
+                    &account.id,
+                    super::super::super::CooldownReason::Network,
+                );
+            }
             log_gateway_result(Some(base), 502, Some(err.as_str()));
             OpenAiAttemptResult::Terminal {
                 status_code: 502,

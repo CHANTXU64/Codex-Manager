@@ -65,10 +65,12 @@ where
         Ok(resp) => PrimaryAttemptResult::Upstream(resp),
         Err(err) => {
             let err_msg = err.to_string();
-            super::super::super::mark_account_cooldown(
-                &account.id,
-                super::super::super::CooldownReason::Network,
-            );
+            if !super::super::super::active_account::is_transient_error(err_msg.as_str()) {
+                super::super::super::mark_account_cooldown(
+                    &account.id,
+                    super::super::super::CooldownReason::Network,
+                );
+            }
             log_gateway_result(Some(url), 502, Some(err_msg.as_str()));
             if has_more_candidates && !super::super::config::is_official_openai_target(url) {
                 PrimaryAttemptResult::Failover

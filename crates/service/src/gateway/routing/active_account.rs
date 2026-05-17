@@ -4,7 +4,7 @@ use codexmanager_core::storage::{
 use std::collections::HashMap;
 
 pub(crate) const ACTIVE_ACCOUNT_IDLE_TTL_SECS: i64 = 3600;
-pub(crate) const ACTIVE_ACCOUNT_MAX_STICKY_SECS: i64 = 14400;
+pub(crate) const ACTIVE_ACCOUNT_MAX_STICKY_SECS: i64 = 57_600;
 pub(crate) const MAX_CONSECUTIVE_REAL_ERRORS: i64 = 3;
 const URGENCY_NORMALIZATION_SECS: f64 = 518_400.0;
 const URGENCY_MIN_TIME_UNTIL_RESET_SECS: i64 = 3600;
@@ -211,9 +211,16 @@ pub(crate) fn is_transient_error(message: &str) -> bool {
     let normalized = message.trim().to_ascii_lowercase();
     normalized.contains("upstream timeout")
         || normalized.contains("temporary upstream failure")
+        || normalized.contains("upstream unavailable")
         || normalized.contains("network error")
         || normalized.contains("eof before response")
+        || normalized.contains("error sending request")
+        || normalized.contains("error decoding response body")
+        || normalized.contains("read upstream body failed")
+        || normalized.contains("connection interrupted")
         || normalized.contains("connection reset by upstream")
+        || normalized.contains("连接中断")
+        || normalized.contains("网络波动")
         || normalized.contains("status 500")
         || normalized.contains("status=500")
         || normalized.contains("status 502")
@@ -565,6 +572,15 @@ mod tests {
     #[test]
     fn error_helpers_classify_transient_disconnect_and_direct_clear() {
         assert!(is_transient_error("upstream timeout"));
+        assert!(is_transient_error(
+            "upstream error: error sending request for url (https://chatgpt.com/backend-api/codex/responses)"
+        ));
+        assert!(is_transient_error(
+            "Transport error: error decoding response body"
+        ));
+        assert!(is_transient_error(
+            "连接中断（可能是网络波动或客户端主动取消）"
+        ));
         assert!(is_client_disconnect_error("broken pipe"));
         assert!(is_direct_clear_error("unauthorized"));
     }
