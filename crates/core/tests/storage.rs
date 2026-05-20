@@ -296,6 +296,69 @@ fn storage_can_upsert_and_resolve_model_source_mappings() {
         .is_none());
 }
 
+#[test]
+fn delete_account_removes_openai_model_source_routes() {
+    let mut storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init schema");
+    let now = now_ts();
+    storage
+        .insert_account(&Account {
+            id: "acc-routing-delete".to_string(),
+            label: "delete route".to_string(),
+            issuer: "https://auth.openai.com".to_string(),
+            chatgpt_account_id: None,
+            workspace_id: None,
+            group_name: None,
+            sort: 0,
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert account");
+    storage
+        .upsert_model_source_model(&ModelSourceModel {
+            source_kind: "openai_account".to_string(),
+            source_id: "acc-routing-delete".to_string(),
+            upstream_model: "gpt-platform".to_string(),
+            display_name: Some("GPT Platform".to_string()),
+            status: "available".to_string(),
+            discovery_kind: "synced".to_string(),
+            last_synced_at: Some(now),
+            extra_json: "{}".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("upsert source model");
+    storage
+        .upsert_model_source_mapping(&ModelSourceMapping {
+            id: "map-routing-delete".to_string(),
+            platform_model_slug: "gpt-platform".to_string(),
+            source_kind: "openai_account".to_string(),
+            source_id: "acc-routing-delete".to_string(),
+            upstream_model: "gpt-platform".to_string(),
+            enabled: true,
+            priority: 0,
+            weight: 1,
+            billing_model_slug: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("upsert mapping");
+
+    storage
+        .delete_account("acc-routing-delete")
+        .expect("delete account");
+
+    assert!(storage
+        .list_model_source_models(Some("openai_account"), Some("acc-routing-delete"))
+        .expect("list source models")
+        .is_empty());
+    assert!(storage
+        .list_model_source_mappings(Some("gpt-platform"))
+        .expect("list mappings")
+        .is_empty());
+}
+
 /// 函数 `token_upsert_keeps_refresh_schedule_columns`
 ///
 /// 作者: gaohongshun
@@ -611,6 +674,7 @@ fn storage_account_subscription_roundtrip_and_delete_cleanup() {
         .upsert_account_subscription(
             "acc-sub-1",
             true,
+            Some("pro"),
             Some("plus"),
             Some(1_746_501_889),
             Some(1_746_501_889),
@@ -622,6 +686,7 @@ fn storage_account_subscription_roundtrip_and_delete_cleanup() {
         .expect("find subscription")
         .expect("subscription exists");
     assert!(subscription.has_subscription);
+    assert_eq!(subscription.account_plan_type.as_deref(), Some("pro"));
     assert_eq!(subscription.plan_type.as_deref(), Some("plus"));
     assert_eq!(subscription.expires_at, Some(1_746_501_889));
     assert_eq!(subscription.renews_at, Some(1_746_501_889));

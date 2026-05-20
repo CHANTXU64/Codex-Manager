@@ -29,6 +29,13 @@ export interface BackgroundTaskSettings {
   warmupCronNextRunAt: number | null;
 }
 
+export interface QuotaGuardSettings {
+  enabled: boolean;
+  primaryMinRemainingPercent: number;
+  secondaryMinRemainingPercent: number;
+  allowAllLowQuotaFallback: boolean;
+}
+
 export interface AppSettings {
   updateAutoCheck: boolean;
   closeToTrayOnClose: boolean;
@@ -54,6 +61,7 @@ export interface AppSettings {
   freeAccountMaxModelOptions: string[];
   modelForwardRules: string;
   accountMaxInflight: number;
+  quotaGuard: QuotaGuardSettings;
   gatewayOriginator: string;
   gatewayOriginatorDefault: string;
   gatewayUserAgentVersion: string;

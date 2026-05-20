@@ -11,6 +11,7 @@ mod errors;
 mod gateway;
 mod http;
 mod lifecycle;
+mod logging;
 mod model_groups;
 mod plugin;
 mod quota;
@@ -108,7 +109,7 @@ pub use app_settings::{
     APP_SETTING_ENV_OVERRIDES_KEY, APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY,
     APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, APP_SETTING_GATEWAY_FREE_ACCOUNT_MAX_MODEL_KEY,
     APP_SETTING_GATEWAY_MODEL_FORWARD_RULES_KEY, APP_SETTING_GATEWAY_ORIGINATOR_KEY,
-    APP_SETTING_GATEWAY_REQUEST_COMPRESSION_ENABLED_KEY,
+    APP_SETTING_GATEWAY_QUOTA_GUARD_KEY, APP_SETTING_GATEWAY_REQUEST_COMPRESSION_ENABLED_KEY,
     APP_SETTING_GATEWAY_RESIDENCY_REQUIREMENT_KEY, APP_SETTING_GATEWAY_ROUTE_STRATEGY_KEY,
     APP_SETTING_GATEWAY_SSE_KEEPALIVE_INTERVAL_MS_KEY, APP_SETTING_GATEWAY_UPSTREAM_PROXY_URL_KEY,
     APP_SETTING_GATEWAY_UPSTREAM_STREAM_TIMEOUT_MS_KEY,
@@ -138,6 +139,7 @@ pub use auth::{rpc_auth_token, rpc_auth_token_matches};
 pub use lifecycle::bootstrap::{initialize_storage_if_needed, portable};
 pub use lifecycle::shutdown::{clear_shutdown_flag, request_shutdown, shutdown_requested};
 pub use lifecycle::startup::{start_one_shot_server, start_server, ServerHandle};
+pub use logging::init_logging;
 pub use rpc_actor::{RpcActor, ROLE_ADMIN, ROLE_MEMBER, ROLE_SYSTEM_ADMIN};
 pub use usage_refresh::{set_usage_refresh_completed_handler, UsageRefreshCompletedEvent};
 

@@ -602,6 +602,7 @@ async fn async_main() {
 /// 无
 fn main() {
     codexmanager_service::portable::bootstrap_current_process();
+    codexmanager_service::init_logging();
     let _ = codexmanager_service::initialize_storage_if_needed();
     codexmanager_service::sync_runtime_settings_from_storage();
 

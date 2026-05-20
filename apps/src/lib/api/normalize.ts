@@ -17,6 +17,7 @@ import {
   ApiKeyUsageStat,
   AppSettings,
   BackgroundTaskSettings,
+  QuotaGuardSettings,
   DeviceAuthInfo,
   EnvOverrideCatalogItem,
   GatewayErrorLog,
@@ -77,6 +78,13 @@ const DEFAULT_BACKGROUND_TASKS: BackgroundTaskSettings = {
   warmupCronExpression: "0 */4 * * *",
   warmupMessage: "hi",
   warmupCronNextRunAt: null,
+};
+
+const DEFAULT_QUOTA_GUARD: QuotaGuardSettings = {
+  enabled: true,
+  primaryMinRemainingPercent: 5,
+  secondaryMinRemainingPercent: 10,
+  allowAllLowQuotaFallback: true,
 };
 
 /**
@@ -1718,6 +1726,37 @@ export function normalizeBackgroundTasks(payload: unknown): BackgroundTaskSettin
  * # 返回
  * 返回函数执行结果
  */
+function clampPercent(value: number | null | undefined, fallback: number): number {
+  const parsed = toNullableNumber(value);
+  if (parsed == null) return fallback;
+  return Math.max(0, Math.min(100, parsed));
+}
+
+export function normalizeQuotaGuard(payload: unknown): QuotaGuardSettings {
+  const source = asObject(payload);
+  return {
+    enabled: asBoolean(source.enabled, DEFAULT_QUOTA_GUARD.enabled),
+    primaryMinRemainingPercent: clampPercent(
+      toNullableNumber(
+        source.primaryMinRemainingPercent ??
+          source.primary_min_remaining_percent
+      ),
+      DEFAULT_QUOTA_GUARD.primaryMinRemainingPercent
+    ),
+    secondaryMinRemainingPercent: clampPercent(
+      toNullableNumber(
+        source.secondaryMinRemainingPercent ??
+          source.secondary_min_remaining_percent
+      ),
+      DEFAULT_QUOTA_GUARD.secondaryMinRemainingPercent
+    ),
+    allowAllLowQuotaFallback: asBoolean(
+      source.allowAllLowQuotaFallback ?? source.allow_all_low_quota_fallback,
+      DEFAULT_QUOTA_GUARD.allowAllLowQuotaFallback
+    ),
+  };
+}
+
 export function normalizeEnvOverrideCatalog(payload: unknown): EnvOverrideCatalogItem[] {
   return asArray(payload).reduce<EnvOverrideCatalogItem[]>((result, item) => {
     const source = asObject(item);
@@ -1792,6 +1831,7 @@ export function normalizeAppSettings(payload: unknown): AppSettings {
     ),
     modelForwardRules: asString(source.modelForwardRules ?? source.model_forward_rules),
     accountMaxInflight: asInteger(source.accountMaxInflight, 1, 0),
+    quotaGuard: normalizeQuotaGuard(source.quotaGuard ?? source.quota_guard),
     gatewayOriginator:
       asString(source.gatewayOriginator) || DEFAULT_CODEX_ORIGINATOR,
     gatewayOriginatorDefault:

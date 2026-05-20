@@ -479,6 +479,22 @@ fn sync_openai_account_source_models_with_options(
             None => true,
         })
         .collect::<Vec<_>>();
+    let active_source_ids = accounts
+        .iter()
+        .map(|account| account.id.clone())
+        .collect::<HashSet<_>>();
+    if let Some(source_id) = requested_source_id.as_deref() {
+        if !active_source_ids.contains(source_id) {
+            storage
+                .delete_model_source_routes_for_source(
+                    ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
+                    source_id,
+                )
+                .map_err(|err| format!("delete stale account source routes failed: {err}"))?;
+        }
+    } else {
+        prune_stale_openai_account_source_routes(storage, &active_source_ids)?;
+    }
     if accounts.is_empty() {
         return Ok(());
     }
@@ -510,6 +526,38 @@ fn sync_openai_account_source_models_with_options(
     Ok(())
 }
 
+fn prune_stale_openai_account_source_routes(
+    storage: &Storage,
+    active_source_ids: &HashSet<String>,
+) -> Result<(), String> {
+    let mut known_source_ids = storage
+        .list_model_source_models(Some(ROUTING_SOURCE_KIND_OPENAI_ACCOUNT), None)
+        .map_err(|err| format!("list account source models failed: {err}"))?
+        .into_iter()
+        .map(|model| model.source_id)
+        .collect::<HashSet<_>>();
+    for mapping in storage
+        .list_model_source_mappings(None)
+        .map_err(|err| format!("list model mappings failed: {err}"))?
+        .into_iter()
+        .filter(|mapping| mapping.source_kind == ROUTING_SOURCE_KIND_OPENAI_ACCOUNT)
+    {
+        known_source_ids.insert(mapping.source_id);
+    }
+    for source_id in known_source_ids {
+        if active_source_ids.contains(source_id.as_str()) {
+            continue;
+        }
+        storage
+            .delete_model_source_routes_for_source(
+                ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
+                source_id.as_str(),
+            )
+            .map_err(|err| format!("delete stale account source routes failed: {err}"))?;
+    }
+    Ok(())
+}
+
 fn sync_aggregate_api_source_models(
     storage: &Storage,
     source_id: Option<&str>,
@@ -518,6 +566,15 @@ fn sync_aggregate_api_source_models(
     let apis = storage
         .list_aggregate_apis()
         .map_err(|err| format!("list aggregate apis failed: {err}"))?;
+    if let Some(source_id) = requested_source_id.as_deref() {
+        let api = apis
+            .iter()
+            .find(|api| api.id == source_id)
+            .ok_or_else(|| format!("aggregate api `{source_id}` not found"))?;
+        if api.status != "active" {
+            return Err(format!("aggregate api `{source_id}` is disabled"));
+        }
+    }
     let mut synced_any = false;
     let mut last_error: Option<String> = None;
     for api in apis
@@ -594,14 +651,13 @@ fn auto_associate_source_models(
     source_id: &str,
     auto_create_platform_models: bool,
 ) -> Result<(), String> {
-    let existing_source_mappings = storage
+    let existing_source_platform_mappings = storage
         .list_model_source_mappings(None)
         .map_err(|err| format!("list model mappings failed: {err}"))?
         .into_iter()
-        .any(|mapping| mapping.source_kind == source_kind && mapping.source_id == source_id);
-    if existing_source_mappings {
-        return Ok(());
-    }
+        .filter(|mapping| mapping.source_kind == source_kind && mapping.source_id == source_id)
+        .map(|mapping| mapping.platform_model_slug)
+        .collect::<HashSet<_>>();
 
     let source_models = storage
         .list_model_source_models(Some(source_kind), Some(source_id))
@@ -667,6 +723,9 @@ fn auto_associate_source_models(
     let now = now_ts();
     for source_model in source_models {
         if !platform_slugs.contains(source_model.upstream_model.as_str()) {
+            continue;
+        }
+        if existing_source_platform_mappings.contains(source_model.upstream_model.as_str()) {
             continue;
         }
         let mapping = ModelSourceMapping {
@@ -1805,8 +1864,9 @@ mod tests {
         managed_catalog_to_models_response, merge_managed_model_catalog, merge_models_response,
         normalize_models_response, read_managed_model_catalog_from_storage,
         read_model_options_from_storage, save_managed_model_catalog_with_storage,
-        save_model_options_with_storage, MODEL_SOURCE_KIND_CUSTOM, MODEL_SOURCE_KIND_REMOTE,
-        ROUTING_SOURCE_KIND_AGGREGATE_API, ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
+        save_model_options_with_storage, sync_aggregate_api_source_models,
+        MODEL_SOURCE_KIND_CUSTOM, MODEL_SOURCE_KIND_REMOTE, ROUTING_SOURCE_KIND_AGGREGATE_API,
+        ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
     };
     use codexmanager_core::rpc::types::{
         ManagedModelCatalogEntry, ManagedModelCatalogResult, ModelInfo, ModelsResponse,
@@ -2225,6 +2285,92 @@ mod tests {
     }
 
     #[test]
+    fn account_pool_bootstrap_links_new_account_after_initial_sync() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        insert_test_account(&storage, "acc-first");
+        seed_platform_catalog(&storage, &["gpt-auto"]);
+
+        bootstrap_account_pool_model_routes(&storage, false).expect("bootstrap first account");
+        insert_test_account(&storage, "acc-second");
+        bootstrap_account_pool_model_routes(&storage, false).expect("bootstrap second account");
+
+        let mut source_ids = storage
+            .list_enabled_model_source_mappings_for_platform("gpt-auto")
+            .expect("list mappings")
+            .into_iter()
+            .map(|mapping| mapping.source_id)
+            .collect::<Vec<_>>();
+        source_ids.sort();
+        assert_eq!(
+            source_ids,
+            vec!["acc-first".to_string(), "acc-second".to_string()]
+        );
+    }
+
+    #[test]
+    fn account_pool_bootstrap_fills_missing_mappings_for_existing_source() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        insert_test_account(&storage, "acc-expand");
+        seed_platform_catalog(&storage, &["gpt-old"]);
+
+        bootstrap_account_pool_model_routes(&storage, false).expect("bootstrap initial catalog");
+        seed_platform_catalog(&storage, &["gpt-old", "gpt-new"]);
+        bootstrap_account_pool_model_routes(&storage, false).expect("bootstrap expanded catalog");
+
+        let mappings = storage
+            .list_enabled_model_source_mappings_for_platform("gpt-new")
+            .expect("list new mappings");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].source_kind, ROUTING_SOURCE_KIND_OPENAI_ACCOUNT);
+        assert_eq!(mappings[0].source_id, "acc-expand");
+        assert_eq!(mappings[0].upstream_model, "gpt-new");
+    }
+
+    #[test]
+    fn account_pool_bootstrap_prunes_stale_account_source_routes() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        seed_platform_catalog(&storage, &["gpt-stale"]);
+        storage
+            .upsert_discovered_model_source_models(
+                ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
+                "acc-stale",
+                &["gpt-stale".to_string()],
+                "synced",
+            )
+            .expect("seed stale source model");
+        let now = now_ts();
+        storage
+            .upsert_model_source_mapping(&ModelSourceMapping {
+                id: "mapping-stale".to_string(),
+                platform_model_slug: "gpt-stale".to_string(),
+                source_kind: ROUTING_SOURCE_KIND_OPENAI_ACCOUNT.to_string(),
+                source_id: "acc-stale".to_string(),
+                upstream_model: "gpt-stale".to_string(),
+                enabled: true,
+                priority: 0,
+                weight: 1,
+                billing_model_slug: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("seed stale mapping");
+
+        bootstrap_account_pool_model_routes(&storage, false).expect("bootstrap account routes");
+
+        assert!(storage
+            .list_model_source_models(Some(ROUTING_SOURCE_KIND_OPENAI_ACCOUNT), Some("acc-stale"))
+            .expect("list source models")
+            .is_empty());
+        assert!(storage
+            .list_model_source_mappings(Some("gpt-stale"))
+            .expect("list mappings")
+            .is_empty());
+    }
+
+    #[test]
     fn account_pool_auto_association_creates_missing_platform_model() {
         let storage = Storage::open_in_memory().expect("open storage");
         storage.init().expect("init storage");
@@ -2298,6 +2444,45 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_source_sync_rejects_disabled_api() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        storage
+            .insert_aggregate_api(&codexmanager_core::storage::AggregateApi {
+                id: "agg-disabled".to_string(),
+                provider_type: "codex".to_string(),
+                supplier_name: Some("disabled".to_string()),
+                sort: 0,
+                url: "https://disabled.example/v1".to_string(),
+                auth_type: "apikey".to_string(),
+                auth_params_json: None,
+                action: None,
+                model_override: None,
+                status: "disabled".to_string(),
+                created_at: 0,
+                updated_at: 0,
+                last_test_at: None,
+                last_test_status: None,
+                last_test_error: None,
+                balance_query_enabled: false,
+                balance_query_template: None,
+                balance_query_base_url: None,
+                balance_query_user_id: None,
+                balance_query_config_json: None,
+                last_balance_at: None,
+                last_balance_status: None,
+                last_balance_error: None,
+                last_balance_json: None,
+            })
+            .expect("insert disabled aggregate api");
+
+        let err = sync_aggregate_api_source_models(&storage, Some("agg-disabled"))
+            .expect_err("disabled aggregate api should not sync");
+        assert!(err.contains("agg-disabled"));
+        assert!(err.contains("disabled"));
+    }
+
+    #[test]
     fn auto_association_preserves_existing_source_mapping_state() {
         let storage = Storage::open_in_memory().expect("open storage");
         storage.init().expect("init storage");
@@ -2341,5 +2526,51 @@ mod tests {
         assert_eq!(mappings.len(), 1);
         assert!(!mappings[0].enabled);
         assert_eq!(mappings[0].id, "mapping-disabled");
+    }
+
+    #[test]
+    fn auto_association_preserves_existing_platform_mapping_override() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("init storage");
+        seed_platform_catalog(&storage, &["gpt-platform"]);
+        storage
+            .upsert_discovered_model_source_models(
+                ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
+                "acc-override",
+                &["gpt-upstream".to_string(), "gpt-platform".to_string()],
+                "synced",
+            )
+            .expect("seed source models");
+        let now = now_ts();
+        storage
+            .upsert_model_source_mapping(&ModelSourceMapping {
+                id: "mapping-override".to_string(),
+                platform_model_slug: "gpt-platform".to_string(),
+                source_kind: ROUTING_SOURCE_KIND_OPENAI_ACCOUNT.to_string(),
+                source_id: "acc-override".to_string(),
+                upstream_model: "gpt-upstream".to_string(),
+                enabled: true,
+                priority: 0,
+                weight: 1,
+                billing_model_slug: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("seed mapping override");
+
+        auto_associate_source_models(
+            &storage,
+            ROUTING_SOURCE_KIND_OPENAI_ACCOUNT,
+            "acc-override",
+            true,
+        )
+        .expect("auto associate");
+
+        let mappings = storage
+            .list_model_source_mappings(Some("gpt-platform"))
+            .expect("list mappings");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].id, "mapping-override");
+        assert_eq!(mappings[0].upstream_model, "gpt-upstream");
     }
 }

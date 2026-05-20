@@ -563,6 +563,7 @@ fn spawn_child(bin: &Path, service_bind_addr: Option<&str>) -> std::io::Result<C
 fn main() {
     // 让 start.exe 也支持同目录 env 文件，保持与 service/web 一致。
     load_env_from_exe_dir_best_effort();
+    codexmanager_service::init_logging();
     // 进一步对齐 service/web 的便携化初始化，确保 DB/RPC token 落点一致。
     codexmanager_service::portable::bootstrap_current_process();
     let _ = codexmanager_service::initialize_storage_if_needed();

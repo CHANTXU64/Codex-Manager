@@ -500,7 +500,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          owner="${{ github.repository_owner }}"
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           tag="${{ github.event.inputs.tag }}"
 
           docker tag codexmanager-service:release "ghcr.io/${owner}/codexmanager-service:${tag}"
@@ -519,4 +519,3 @@ jobs:
           ref: ${{ github.event.inputs.ref || 'main' }}
           prerelease-input: ${{ github.event.inputs.prerelease || 'auto' }}
           assets-dir: release-assets
-
