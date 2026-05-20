@@ -117,6 +117,14 @@ fn codex_headers_are_captured_from_http_headers() {
         "x-responsesapi-include-timing-metrics",
         axum::http::HeaderValue::from_static("true"),
     );
+    headers.insert(
+        "x-codex-inference-call-id",
+        axum::http::HeaderValue::from_static("call_123"),
+    );
+    headers.insert(
+        "x-oai-attestation",
+        axum::http::HeaderValue::from_static("attest_123"),
+    );
 
     let snapshot = IncomingHeaderSnapshot::from_http_headers(&headers);
     assert_eq!(snapshot.user_agent(), Some("codex_cli_rs/0.999.0"));
@@ -126,5 +134,7 @@ fn codex_headers_are_captured_from_http_headers() {
     assert_eq!(snapshot.codex_installation_id(), Some("install_123"));
     assert_eq!(snapshot.window_id(), Some("thread_child_123:7"));
     assert_eq!(snapshot.responsesapi_include_timing_metrics(), Some("true"));
+    assert_eq!(snapshot.codex_inference_call_id(), Some("call_123"));
+    assert_eq!(snapshot.oai_attestation(), Some("attest_123"));
     assert!(snapshot.passthrough_codex_headers().is_empty());
 }

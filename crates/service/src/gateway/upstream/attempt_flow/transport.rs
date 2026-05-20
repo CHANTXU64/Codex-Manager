@@ -792,6 +792,7 @@ fn send_upstream_request_with_compression_override(
             } else {
                 incoming_headers.parent_thread_id()
             },
+            incoming_oai_attestation: incoming_headers.oai_attestation(),
             passthrough_codex_headers: incoming_headers.passthrough_codex_headers(),
             fallback_session_id: if gemini_codex_compat {
                 None
@@ -838,6 +839,8 @@ fn send_upstream_request_with_compression_override(
             },
             incoming_responsesapi_include_timing_metrics: incoming_headers
                 .responsesapi_include_timing_metrics(),
+            incoming_inference_call_id: incoming_headers.codex_inference_call_id(),
+            incoming_oai_attestation: incoming_headers.oai_attestation(),
             passthrough_codex_headers: incoming_headers.passthrough_codex_headers(),
             fallback_session_id: if gemini_codex_compat {
                 None

@@ -3,6 +3,8 @@ const X_CODEX_WINDOW_ID_HEADER_NAME: &str = "x-codex-window-id";
 const X_CODEX_PARENT_THREAD_ID_HEADER_NAME: &str = "x-codex-parent-thread-id";
 const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER_NAME: &str =
     "x-responsesapi-include-timing-metrics";
+const X_CODEX_INFERENCE_CALL_ID_HEADER_NAME: &str = "x-codex-inference-call-id";
+const X_OAI_ATTESTATION_HEADER_NAME: &str = "x-oai-attestation";
 
 fn anchor_fingerprint_or_dash(value: Option<&str>) -> String {
     value
@@ -54,6 +56,8 @@ pub(crate) struct CodexUpstreamHeaderInput<'a> {
     pub(crate) incoming_turn_metadata: Option<&'a str>,
     pub(crate) incoming_parent_thread_id: Option<&'a str>,
     pub(crate) incoming_responsesapi_include_timing_metrics: Option<&'a str>,
+    pub(crate) incoming_inference_call_id: Option<&'a str>,
+    pub(crate) incoming_oai_attestation: Option<&'a str>,
     pub(crate) passthrough_codex_headers: &'a [(String, String)],
     pub(crate) fallback_session_id: Option<&'a str>,
     pub(crate) incoming_turn_state: Option<&'a str>,
@@ -74,6 +78,7 @@ pub(crate) struct CodexCompactUpstreamHeaderInput<'a> {
     pub(crate) incoming_window_id: Option<&'a str>,
     pub(crate) incoming_subagent: Option<&'a str>,
     pub(crate) incoming_parent_thread_id: Option<&'a str>,
+    pub(crate) incoming_oai_attestation: Option<&'a str>,
     pub(crate) passthrough_codex_headers: &'a [(String, String)],
     pub(crate) fallback_session_id: Option<&'a str>,
     pub(crate) strip_session_affinity: bool,
@@ -186,6 +191,26 @@ pub(crate) fn build_codex_upstream_headers(
             include_timing_metrics.to_string(),
         ));
     }
+    if let Some(inference_call_id) = input
+        .incoming_inference_call_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.push((
+            X_CODEX_INFERENCE_CALL_ID_HEADER_NAME.to_string(),
+            inference_call_id.to_string(),
+        ));
+    }
+    if let Some(oai_attestation) = input
+        .incoming_oai_attestation
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.push((
+            X_OAI_ATTESTATION_HEADER_NAME.to_string(),
+            oai_attestation.to_string(),
+        ));
+    }
     let resolved_session_id = resolve_optional_session_id(
         input.incoming_session_id,
         input.fallback_session_id,
@@ -285,6 +310,16 @@ pub(crate) fn build_codex_compact_upstream_headers(
         headers.push((
             X_CODEX_PARENT_THREAD_ID_HEADER_NAME.to_string(),
             parent_thread_id.to_string(),
+        ));
+    }
+    if let Some(oai_attestation) = input
+        .incoming_oai_attestation
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.push((
+            X_OAI_ATTESTATION_HEADER_NAME.to_string(),
+            oai_attestation.to_string(),
         ));
     }
     let resolved_session_id = resolve_optional_session_id(
@@ -552,6 +587,8 @@ mod tests {
             incoming_turn_metadata: Some("meta-a"),
             incoming_parent_thread_id: Some("thread-parent-a"),
             incoming_responsesapi_include_timing_metrics: Some("true"),
+            incoming_inference_call_id: Some("inference-call-a"),
+            incoming_oai_attestation: Some("attestation-a"),
             passthrough_codex_headers: passthrough.as_slice(),
             fallback_session_id: Some("conversation-anchor"),
             incoming_turn_state: Some("turn-state-a"),
@@ -577,6 +614,14 @@ mod tests {
         assert_eq!(
             header_value(&headers, "x-responsesapi-include-timing-metrics"),
             Some("true")
+        );
+        assert_eq!(
+            header_value(&headers, "x-codex-inference-call-id"),
+            Some("inference-call-a")
+        );
+        assert_eq!(
+            header_value(&headers, "x-oai-attestation"),
+            Some("attestation-a")
         );
         let expected_user_agent_prefix =
             format!("{}/0.999.0", crate::gateway::current_wire_originator());
@@ -650,6 +695,8 @@ mod tests {
             incoming_turn_metadata: None,
             incoming_parent_thread_id: Some("thread-parent-b"),
             incoming_responsesapi_include_timing_metrics: None,
+            incoming_inference_call_id: None,
+            incoming_oai_attestation: None,
             passthrough_codex_headers: passthrough.as_slice(),
             fallback_session_id: Some("prompt-cache-anchor"),
             incoming_turn_state: None,
@@ -712,6 +759,7 @@ mod tests {
             incoming_window_id: Some("conversation-anchor:11"),
             incoming_subagent: Some("subagent-b"),
             incoming_parent_thread_id: Some("thread-parent-c"),
+            incoming_oai_attestation: Some("attestation-compact"),
             passthrough_codex_headers: passthrough.as_slice(),
             fallback_session_id: Some("conversation-anchor"),
             strip_session_affinity: true,
@@ -726,6 +774,10 @@ mod tests {
         assert_eq!(
             header_value(&headers, "x-codex-installation-id"),
             Some("install-compact-internal")
+        );
+        assert_eq!(
+            header_value(&headers, "x-oai-attestation"),
+            Some("attestation-compact")
         );
         assert_eq!(header_value(&headers, "x-client-request-id"), None);
         assert_eq!(
@@ -775,6 +827,8 @@ mod tests {
             incoming_turn_metadata: None,
             incoming_parent_thread_id: None,
             incoming_responsesapi_include_timing_metrics: None,
+            incoming_inference_call_id: None,
+            incoming_oai_attestation: None,
             passthrough_codex_headers: &[],
             fallback_session_id: Some("fallback-anchor"),
             incoming_turn_state: Some("turn-state-window-fix"),
@@ -810,6 +864,8 @@ mod tests {
             incoming_turn_metadata: None,
             incoming_parent_thread_id: None,
             incoming_responsesapi_include_timing_metrics: None,
+            incoming_inference_call_id: None,
+            incoming_oai_attestation: None,
             passthrough_codex_headers: &[],
             fallback_session_id: Some("thread-ident"),
             incoming_turn_state: None,
@@ -845,6 +901,8 @@ mod tests {
             incoming_turn_metadata: None,
             incoming_parent_thread_id: None,
             incoming_responsesapi_include_timing_metrics: None,
+            incoming_inference_call_id: None,
+            incoming_oai_attestation: None,
             passthrough_codex_headers: &[],
             fallback_session_id: Some("thread-compat"),
             incoming_turn_state: None,
@@ -875,6 +933,7 @@ mod tests {
             incoming_window_id: None,
             incoming_subagent: None,
             incoming_parent_thread_id: None,
+            incoming_oai_attestation: None,
             passthrough_codex_headers: &[],
             fallback_session_id: Some("session-anchor"),
             strip_session_affinity: false,

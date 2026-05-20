@@ -134,6 +134,8 @@ fn codex_header_profile_sets_required_headers_for_stream() {
         incoming_turn_metadata: Some("{\"workspace\":\"repo\"}"),
         incoming_parent_thread_id: Some("thread-parent-1"),
         incoming_responsesapi_include_timing_metrics: Some("true"),
+        incoming_inference_call_id: Some("inference-call-1"),
+        incoming_oai_attestation: Some("attestation-1"),
         passthrough_codex_headers: passthrough.as_slice(),
         fallback_session_id: None,
         incoming_turn_state: Some("turn-state"),
@@ -167,6 +169,14 @@ fn codex_header_profile_sets_required_headers_for_stream() {
     assert_eq!(
         find_header(&headers, "x-responsesapi-include-timing-metrics").as_deref(),
         Some("true")
+    );
+    assert_eq!(
+        find_header(&headers, "x-codex-inference-call-id").as_deref(),
+        Some("inference-call-1")
+    );
+    assert_eq!(
+        find_header(&headers, "x-oai-attestation").as_deref(),
+        Some("attestation-1")
     );
     assert_eq!(
         find_header(&headers, "Originator").as_deref(),
@@ -231,6 +241,8 @@ fn codex_header_profile_uses_json_accept_for_non_stream() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: None,
         incoming_turn_state: None,
@@ -283,6 +295,7 @@ fn codex_compact_header_profile_matches_remote_compact_shape() {
         incoming_window_id: Some("session-compact:7"),
         incoming_subagent: Some("compact"),
         incoming_parent_thread_id: Some("thread-parent-compact"),
+        incoming_oai_attestation: Some("attestation-compact"),
         passthrough_codex_headers: passthrough.as_slice(),
         fallback_session_id: Some("fallback-session"),
         strip_session_affinity: false,
@@ -300,6 +313,10 @@ fn codex_compact_header_profile_matches_remote_compact_shape() {
     assert_eq!(
         find_header(&headers, "x-codex-installation-id").as_deref(),
         Some("install-compact")
+    );
+    assert_eq!(
+        find_header(&headers, "x-oai-attestation").as_deref(),
+        Some("attestation-compact")
     );
     assert_eq!(
         find_header(&headers, "Content-Type").as_deref(),
@@ -370,6 +387,7 @@ fn codex_compact_header_profile_omits_subagent_without_explicit_source() {
         incoming_window_id: None,
         incoming_subagent: None,
         incoming_parent_thread_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: Some("fallback-session"),
         strip_session_affinity: false,
@@ -406,6 +424,7 @@ fn codex_compact_header_profile_omits_session_without_thread_anchor() {
         incoming_window_id: None,
         incoming_subagent: None,
         incoming_parent_thread_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: None,
         strip_session_affinity: false,
@@ -450,6 +469,8 @@ fn codex_header_profile_uses_dynamic_originator_and_residency_requirement() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: None,
         incoming_turn_state: None,
@@ -510,6 +531,8 @@ fn codex_header_profile_regenerates_session_on_failover() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: passthrough.as_slice(),
         fallback_session_id: Some("fallback-session"),
         incoming_turn_state: Some("sticky-turn"),
@@ -563,6 +586,8 @@ fn codex_header_profile_uses_fallback_session_when_incoming_missing() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: Some("fallback-session"),
         incoming_turn_state: None,
@@ -610,6 +635,8 @@ fn codex_header_profile_does_not_forward_conversation_header_even_with_fallback(
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: Some("fallback-session"),
         incoming_turn_state: None,
@@ -649,6 +676,8 @@ fn codex_header_profile_skips_account_header_when_disabled() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: None,
         incoming_turn_state: None,
@@ -688,6 +717,8 @@ fn codex_header_profile_can_disable_affinity_headers() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: None,
         incoming_turn_state: Some("sticky-turn"),
@@ -738,6 +769,8 @@ fn codex_header_profile_does_not_invent_client_request_id_on_failover() {
         incoming_turn_metadata: None,
         incoming_parent_thread_id: None,
         incoming_responsesapi_include_timing_metrics: None,
+        incoming_inference_call_id: None,
+        incoming_oai_attestation: None,
         passthrough_codex_headers: &[],
         fallback_session_id: Some("fallback-session"),
         incoming_turn_state: Some("sticky-turn"),

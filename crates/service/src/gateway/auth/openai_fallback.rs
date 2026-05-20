@@ -274,6 +274,7 @@ pub(super) fn try_openai_fallback(
             incoming_window_id: incoming_headers.window_id(),
             incoming_subagent: incoming_headers.subagent(),
             incoming_parent_thread_id: incoming_headers.parent_thread_id(),
+            incoming_oai_attestation: incoming_headers.oai_attestation(),
             passthrough_codex_headers: incoming_headers.passthrough_codex_headers(),
             fallback_session_id: request_affinity.fallback_session_id,
             strip_session_affinity,
@@ -296,6 +297,8 @@ pub(super) fn try_openai_fallback(
             incoming_parent_thread_id: incoming_headers.parent_thread_id(),
             incoming_responsesapi_include_timing_metrics: incoming_headers
                 .responsesapi_include_timing_metrics(),
+            incoming_inference_call_id: incoming_headers.codex_inference_call_id(),
+            incoming_oai_attestation: incoming_headers.oai_attestation(),
             passthrough_codex_headers: incoming_headers.passthrough_codex_headers(),
             fallback_session_id: request_affinity.fallback_session_id,
             incoming_turn_state: request_affinity.incoming_turn_state,

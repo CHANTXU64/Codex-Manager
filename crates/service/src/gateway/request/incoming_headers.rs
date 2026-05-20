@@ -20,6 +20,8 @@ pub(crate) struct IncomingHeaderSnapshot {
     parent_thread_id: Option<String>,
     codex_installation_id: Option<String>,
     responsesapi_include_timing_metrics: Option<String>,
+    codex_inference_call_id: Option<String>,
+    oai_attestation: Option<String>,
     passthrough_codex_headers: Vec<(String, String)>,
     conversation_id: Option<String>,
 }
@@ -152,6 +154,21 @@ impl IncomingHeaderSnapshot {
             {
                 if !value.is_empty() {
                     snapshot.responsesapi_include_timing_metrics = Some(value.to_string());
+                }
+                continue;
+            }
+            if snapshot.codex_inference_call_id.is_none()
+                && name.eq_ignore_ascii_case("x-codex-inference-call-id")
+            {
+                if !value.is_empty() {
+                    snapshot.codex_inference_call_id = Some(value.to_string());
+                }
+                continue;
+            }
+            if snapshot.oai_attestation.is_none() && name.eq_ignore_ascii_case("x-oai-attestation")
+            {
+                if !value.is_empty() {
+                    snapshot.oai_attestation = Some(value.to_string());
                 }
                 continue;
             }
@@ -297,6 +314,22 @@ impl IncomingHeaderSnapshot {
                 let value = header.value.as_str().trim();
                 if !value.is_empty() {
                     snapshot.responsesapi_include_timing_metrics = Some(value.to_string());
+                }
+                continue;
+            }
+            if snapshot.codex_inference_call_id.is_none()
+                && header.field.equiv("x-codex-inference-call-id")
+            {
+                let value = header.value.as_str().trim();
+                if !value.is_empty() {
+                    snapshot.codex_inference_call_id = Some(value.to_string());
+                }
+                continue;
+            }
+            if snapshot.oai_attestation.is_none() && header.field.equiv("x-oai-attestation") {
+                let value = header.value.as_str().trim();
+                if !value.is_empty() {
+                    snapshot.oai_attestation = Some(value.to_string());
                 }
                 continue;
             }
@@ -579,6 +612,14 @@ impl IncomingHeaderSnapshot {
     /// 返回函数执行结果
     pub(crate) fn responsesapi_include_timing_metrics(&self) -> Option<&str> {
         self.responsesapi_include_timing_metrics.as_deref()
+    }
+
+    pub(crate) fn codex_inference_call_id(&self) -> Option<&str> {
+        self.codex_inference_call_id.as_deref()
+    }
+
+    pub(crate) fn oai_attestation(&self) -> Option<&str> {
+        self.oai_attestation.as_deref()
     }
 
     /// 函数 `passthrough_codex_headers`

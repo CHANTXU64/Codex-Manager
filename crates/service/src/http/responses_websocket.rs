@@ -1198,6 +1198,9 @@ fn build_upstream_websocket_request(
             include_timing_metrics,
         )?;
     }
+    if let Some(oai_attestation) = context.incoming_headers.oai_attestation() {
+        insert_header(headers, "x-oai-attestation", oai_attestation)?;
+    }
     Ok(request)
 }
 
@@ -1677,13 +1680,13 @@ impl From<String> for WsSessionError {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_socks5_connect_request, infer_ws_terminal_status, inspect_ws_terminal_event,
-        is_previous_response_not_found_terminal, merge_client_metadata, parse_websocket_target,
-        proxy_basic_auth_header, rewrite_client_frame, strip_previous_response_id_from_ws_text,
-        WsRequestContext,
+        build_socks5_connect_request, build_upstream_websocket_request, infer_ws_terminal_status,
+        inspect_ws_terminal_event, is_previous_response_not_found_terminal, merge_client_metadata,
+        parse_websocket_target, proxy_basic_auth_header, rewrite_client_frame,
+        strip_previous_response_id_from_ws_text, WsRequestContext,
     };
     use axum::http::{HeaderMap, HeaderValue};
-    use codexmanager_core::storage::ApiKey;
+    use codexmanager_core::storage::{Account, ApiKey};
     use serde_json::json;
 
     fn sample_api_key() -> ApiKey {
@@ -1706,6 +1709,21 @@ mod tests {
             aggregate_api_id: None,
             aggregate_api_url: None,
             account_plan_filter: None,
+        }
+    }
+
+    fn sample_account() -> Account {
+        Account {
+            id: "acc-test".to_string(),
+            label: "test".to_string(),
+            issuer: "".to_string(),
+            chatgpt_account_id: Some("workspace-test".to_string()),
+            workspace_id: None,
+            group_name: None,
+            sort: 0,
+            status: "active".to_string(),
+            created_at: 0,
+            updated_at: 0,
         }
     }
 
@@ -1827,6 +1845,36 @@ mod tests {
                 .get("prompt_cache_key")
                 .and_then(serde_json::Value::as_str),
             Some("client-thread")
+        );
+    }
+
+    #[test]
+    fn upstream_websocket_request_forwards_oai_attestation_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-oai-attestation", HeaderValue::from_static("attest-ws"));
+        let context = WsRequestContext {
+            api_key: sample_api_key(),
+            incoming_headers: crate::gateway::IncomingHeaderSnapshot::from_http_headers(&headers),
+            prompt_cache_key: None,
+            effective_upstream_base: "https://chatgpt.com/backend-api/codex".to_string(),
+            prefer_raw_errors: false,
+        };
+        let account = sample_account();
+
+        let request = build_upstream_websocket_request(
+            "wss://chatgpt.com/backend-api/codex/v1/responses",
+            &account,
+            "bearer-ws",
+            &context,
+        )
+        .unwrap_or_else(|err| panic!("build upstream websocket request failed: {}", err.message));
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-oai-attestation")
+                .and_then(|value| value.to_str().ok()),
+            Some("attest-ws")
         );
     }
 
