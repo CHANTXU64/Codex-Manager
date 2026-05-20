@@ -523,10 +523,13 @@ fn enrich_completed_response_with_sse_text(
         .get("output")
         .and_then(Value::as_array)
         .is_some_and(|items| !items.is_empty());
-    let has_effective_output = response_has_effective_output(&Value::Object(response_obj.clone()));
+    let mut has_effective_output =
+        response_has_effective_output(&Value::Object(response_obj.clone()));
     if !has_structured_output {
         if let Some(output_items) = build_response_output_items_from_sse(synthesis) {
             response_obj.insert("output".to_string(), output_items);
+            has_effective_output =
+                response_has_effective_output(&Value::Object(response_obj.clone()));
         } else if !has_effective_output && !synthesis.output_text.trim().is_empty() {
             response_obj.insert(
                 "output".to_string(),

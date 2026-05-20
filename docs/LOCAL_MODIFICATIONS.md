@@ -19,8 +19,9 @@ Summary:
 What changed:
 
 - `/v1/chat/completions` 请求改写到 `/v1/responses` 时，将 `response_format: {"type":"json_object"}` 映射到 Responses API 的 `text.format`；`json_schema` 格式会从 Chat Completions 的 `json_schema` 包装中展开到 Responses `text.format`。
-- 同步转发常用生成控制字段：`max_completion_tokens` / `max_tokens` -> `max_output_tokens`，以及 `temperature`、`top_p`、`stop`。
-- Responses SSE 非流式聚合如果 completed response 已经包含有效结构化 `output`，不再用从 SSE delta 聚合出的 `synthesis.output_text` 补写顶层 `output_text`，避免后续 Chat Completions 转换优先读取重复文本。
+- 同步转发 Responses API 已确认支持的常用生成控制字段：`max_completion_tokens` / `max_tokens` -> `max_output_tokens`，以及 `temperature`、`top_p`；不转发 Chat Completions 的 `stop`，避免向 Responses API 发送未确认支持的参数。
+- `response_format: {"type":"json_schema"}` 缺少有效 `json_schema` 对象时返回本地 400，不再静默降级为普通文本输出。
+- Responses SSE 非流式聚合如果 completed response 已经包含或可从 SSE output item 补出有效结构化 `output`，不再用从 SSE delta 聚合出的 `synthesis.output_text` 补写顶层 `output_text`，避免后续 Chat Completions 转换优先读取重复文本。
 
 Merge protection:
 

@@ -353,14 +353,21 @@ fn chat_tool_choice_to_responses(value: &serde_json::Value) -> serde_json::Value
 
 fn chat_response_format_to_responses_text_format(
     value: &serde_json::Value,
-) -> Option<serde_json::Value> {
-    let obj = value.as_object()?;
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(obj) = value.as_object() else {
+        return Err("Invalid request: response_format must be an object".to_string());
+    };
     match obj.get("type").and_then(serde_json::Value::as_str) {
-        Some("json_object") => Some(serde_json::json!({ "type": "json_object" })),
+        Some("json_object") => Ok(Some(serde_json::json!({ "type": "json_object" }))),
         Some("json_schema") => {
-            let schema_obj = obj
+            let Some(schema_obj) = obj
                 .get("json_schema")
-                .and_then(serde_json::Value::as_object)?;
+                .and_then(serde_json::Value::as_object)
+            else {
+                return Err(
+                    "Invalid request: response_format.json_schema must be an object".to_string(),
+                );
+            };
             let mut mapped = serde_json::Map::new();
             mapped.insert(
                 "type".to_string(),
@@ -378,9 +385,12 @@ fn chat_response_format_to_responses_text_format(
             if let Some(strict) = schema_obj.get("strict") {
                 mapped.insert("strict".to_string(), strict.clone());
             }
-            Some(serde_json::Value::Object(mapped))
+            Ok(Some(serde_json::Value::Object(mapped)))
         }
-        _ => None,
+        Some("text") | None => Ok(None),
+        Some(other) => Err(format!(
+            "Invalid request: unsupported response_format.type `{other}`"
+        )),
     }
 }
 
@@ -491,16 +501,17 @@ fn adapt_openai_chat_completions_body_to_responses(body: Vec<u8>) -> Result<Vec<
     {
         rewritten.insert("max_output_tokens".to_string(), max_tokens.clone());
     }
-    for field in ["temperature", "top_p", "stop"] {
+    for field in ["temperature", "top_p"] {
         if let Some(value) = obj.get(field) {
             rewritten.insert(field.to_string(), value.clone());
         }
     }
-    if let Some(format) = obj
-        .get("response_format")
-        .and_then(chat_response_format_to_responses_text_format)
-    {
-        merge_responses_text_format(&mut rewritten, obj.get("text"), format);
+    if let Some(response_format) = obj.get("response_format") {
+        if let Some(format) = chat_response_format_to_responses_text_format(response_format)? {
+            merge_responses_text_format(&mut rewritten, obj.get("text"), format);
+        } else if let Some(text) = obj.get("text") {
+            rewritten.insert("text".to_string(), text.clone());
+        }
     } else if let Some(text) = obj.get("text") {
         rewritten.insert("text".to_string(), text.clone());
     }
@@ -1759,7 +1770,58 @@ mod chat_completions_responses_tests {
         assert_eq!(value["max_output_tokens"], 256);
         assert_eq!(value["temperature"], 0.2);
         assert_eq!(value["top_p"], 0.9);
-        assert_eq!(value["stop"], json!(["\n\n"]));
+        assert!(value.get("stop").is_none());
+    }
+
+    #[test]
+    fn chat_completions_response_format_json_schema_merges_existing_text_config() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "ok": { "type": "boolean" } },
+            "required": ["ok"],
+            "additionalProperties": false
+        });
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "Return JSON only" }],
+            "text": { "verbosity": "low" },
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "result",
+                    "schema": schema,
+                    "strict": true
+                }
+            }
+        });
+
+        let mapped = adapt_openai_chat_completions_body_to_responses(
+            serde_json::to_vec(&body).expect("body"),
+        )
+        .expect("adapt chat completions request");
+        let value: serde_json::Value = serde_json::from_slice(&mapped).expect("parse mapped body");
+
+        assert_eq!(value["text"]["verbosity"], "low");
+        assert_eq!(value["text"]["format"]["type"], "json_schema");
+        assert_eq!(value["text"]["format"]["name"], "result");
+        assert_eq!(value["text"]["format"]["schema"], schema);
+        assert_eq!(value["text"]["format"]["strict"], true);
+    }
+
+    #[test]
+    fn chat_completions_invalid_json_schema_response_format_is_rejected() {
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "Return JSON only" }],
+            "response_format": { "type": "json_schema" }
+        });
+
+        let err = adapt_openai_chat_completions_body_to_responses(
+            serde_json::to_vec(&body).expect("body"),
+        )
+        .expect_err("invalid json_schema response_format should be rejected");
+
+        assert!(err.contains("response_format.json_schema"));
     }
 }
 

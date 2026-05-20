@@ -4095,6 +4095,53 @@ mod tests {
     }
 
     #[test]
+    fn responses_sse_completed_without_output_uses_sse_item_once() {
+        let json_text = r#"{"ok":true}"#;
+        let payload = format!(
+            concat!(
+                "event: response.output_item.done\n",
+                "data: {{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":{delta:?}}}]}}}}\n\n",
+                "event: response.output_text.done\n",
+                "data: {{\"type\":\"response.output_text.done\",\"text\":{delta:?}}}\n\n",
+                "event: response.completed\n",
+                "data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_json\",\"model\":\"gpt-5.4\"}}}}\n\n"
+            ),
+            delta = json_text,
+        );
+
+        let (body, _usage) = collect_non_stream_json_from_sse_bytes(payload.as_bytes());
+        let body = body.expect("synthesized responses body");
+        let response_value: serde_json::Value =
+            serde_json::from_slice(&body).expect("responses json");
+        assert!(response_value.get("output_text").is_none());
+        let mapped = convert_responses_body_to_chat_completions(&body).expect("mapped chat body");
+        let value: serde_json::Value = serde_json::from_slice(&mapped).expect("chat json");
+
+        assert_eq!(value["choices"][0]["message"]["content"], json_text);
+    }
+
+    #[test]
+    fn responses_sse_response_done_terminal_maps_to_single_chat_content() {
+        let json_text = r#"{"done":true}"#;
+        let payload = format!(
+            concat!(
+                "event: response.output_text.done\n",
+                "data: {{\"type\":\"response.output_text.done\",\"text\":{delta:?}}}\n\n",
+                "event: response.done\n",
+                "data: {{\"type\":\"response.done\",\"response\":{{\"id\":\"resp_json\",\"model\":\"gpt-5.4\",\"output\":[{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":{delta:?}}}]}}]}}}}\n\n"
+            ),
+            delta = json_text,
+        );
+
+        let (body, _usage) = collect_non_stream_json_from_sse_bytes(payload.as_bytes());
+        let body = body.expect("synthesized responses body");
+        let mapped = convert_responses_body_to_chat_completions(&body).expect("mapped chat body");
+        let value: serde_json::Value = serde_json::from_slice(&mapped).expect("chat json");
+
+        assert_eq!(value["choices"][0]["message"]["content"], json_text);
+    }
+
+    #[test]
     fn non_stream_images_response_builds_b64_json_payload() {
         let body = json!({
             "id": "resp_images_1",
