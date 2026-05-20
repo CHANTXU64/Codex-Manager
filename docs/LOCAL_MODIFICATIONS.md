@@ -2,6 +2,43 @@
 
 本文件只记录本地 fork / 我们自己维护的修改，避免把本地定制混入官方功能说明文档。
 
+## Chat Completions JSON mode and SSE aggregation compatibility
+
+Status: active
+
+Files:
+
+- `crates/service/src/gateway/local_validation/request.rs`
+- `crates/service/src/gateway/observability/http_bridge/aggregate/sse_aggregate.rs`
+- `crates/service/src/gateway/observability/http_bridge/delivery.rs`
+
+Summary:
+
+- 修复 OpenAI Chat Completions 兼容入口改写到 Responses API 时丢失 JSON 输出约束的问题，并避免非流式桥接 Responses SSE 时把同一份输出文本从 delta / completed response 重复聚合进 Chat Completions `message.content`。
+
+What changed:
+
+- `/v1/chat/completions` 请求改写到 `/v1/responses` 时，将 `response_format: {"type":"json_object"}` 映射到 Responses API 的 `text.format`；`json_schema` 格式会从 Chat Completions 的 `json_schema` 包装中展开到 Responses `text.format`。
+- 同步转发常用生成控制字段：`max_completion_tokens` / `max_tokens` -> `max_output_tokens`，以及 `temperature`、`top_p`、`stop`。
+- Responses SSE 非流式聚合如果 completed response 已经包含有效结构化 `output`，不再用从 SSE delta 聚合出的 `synthesis.output_text` 补写顶层 `output_text`，避免后续 Chat Completions 转换优先读取重复文本。
+
+Merge protection:
+
+- Preserve when: 仍需要支持 OpenAI Chat Completions 客户端经 Codex-Manager 访问 Responses API，尤其是 JSON mode / Hindsight 等依赖严格 JSON 输出的调用。
+- Drop when: upstream 已提供等价的 Chat Completions -> Responses 字段映射，并已验证 Responses SSE delta/done/completed 聚合不会重复输出文本。
+- Ask user when: upstream 重构请求协议适配或 SSE 聚合路径，导致 `text.format` 映射字段、`output_text` 优先级或 completed response 处理语义变化。
+
+Verification:
+
+```bash
+cargo test -p codexmanager-service chat_completions_response_format_json_object_maps_to_responses_text_format -- --nocapture
+cargo test -p codexmanager-service responses_sse_delta_done_and_completed_output_maps_to_single_chat_content -- --nocapture
+cargo fmt --check
+cargo test -p codexmanager-service -- --nocapture
+```
+
+Upstream status: fork-only
+
 ## Web logs cache anomaly highlighting
 
 - 提交：`d4309812 Highlight cache miss rows in logs`

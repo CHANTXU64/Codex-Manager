@@ -3782,6 +3782,7 @@ fn resolve_stream_keepalive_frame(
 
 #[cfg(test)]
 mod tests {
+    use super::collect_non_stream_json_from_sse_bytes;
     use super::{
         build_passthrough_non_success_message, classify_compact_non_success_kind,
         compact_non_success_body_should_be_normalized, compact_success_body_is_valid,
@@ -4068,6 +4069,29 @@ mod tests {
             value["usage"]["prompt_tokens"],
             serde_json::Value::Number(2.into())
         );
+    }
+
+    #[test]
+    fn responses_sse_delta_done_and_completed_output_maps_to_single_chat_content() {
+        let json_text = r#"{"ok":true}"#;
+        let payload = format!(
+            concat!(
+                "event: response.output_text.delta\n",
+                "data: {{\"type\":\"response.output_text.delta\",\"delta\":{delta:?}}}\n\n",
+                "event: response.output_text.done\n",
+                "data: {{\"type\":\"response.output_text.done\",\"text\":{delta:?}}}\n\n",
+                "event: response.completed\n",
+                "data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_json\",\"model\":\"gpt-5.4\",\"output\":[{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":{delta:?}}}]}}]}}}}\n\n"
+            ),
+            delta = json_text,
+        );
+
+        let (body, _usage) = collect_non_stream_json_from_sse_bytes(payload.as_bytes());
+        let body = body.expect("synthesized responses body");
+        let mapped = convert_responses_body_to_chat_completions(&body).expect("mapped chat body");
+        let value: serde_json::Value = serde_json::from_slice(&mapped).expect("chat json");
+
+        assert_eq!(value["choices"][0]["message"]["content"], json_text);
     }
 
     #[test]

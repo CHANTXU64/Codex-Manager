@@ -534,10 +534,11 @@ fn enrich_completed_response_with_sse_text(
             );
         }
     }
-    if response_obj
-        .get("output_text")
-        .and_then(Value::as_str)
-        .is_none_or(|text| text.trim().is_empty())
+    if !has_effective_output
+        && response_obj
+            .get("output_text")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.trim().is_empty())
         && !synthesis.output_text.trim().is_empty()
     {
         response_obj.insert(

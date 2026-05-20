@@ -351,6 +351,52 @@ fn chat_tool_choice_to_responses(value: &serde_json::Value) -> serde_json::Value
     serde_json::json!({ "type": "function", "name": name })
 }
 
+fn chat_response_format_to_responses_text_format(
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let obj = value.as_object()?;
+    match obj.get("type").and_then(serde_json::Value::as_str) {
+        Some("json_object") => Some(serde_json::json!({ "type": "json_object" })),
+        Some("json_schema") => {
+            let schema_obj = obj
+                .get("json_schema")
+                .and_then(serde_json::Value::as_object)?;
+            let mut mapped = serde_json::Map::new();
+            mapped.insert(
+                "type".to_string(),
+                serde_json::Value::String("json_schema".to_string()),
+            );
+            if let Some(name) = schema_obj.get("name") {
+                mapped.insert("name".to_string(), name.clone());
+            }
+            if let Some(description) = schema_obj.get("description") {
+                mapped.insert("description".to_string(), description.clone());
+            }
+            if let Some(schema) = schema_obj.get("schema") {
+                mapped.insert("schema".to_string(), schema.clone());
+            }
+            if let Some(strict) = schema_obj.get("strict") {
+                mapped.insert("strict".to_string(), strict.clone());
+            }
+            Some(serde_json::Value::Object(mapped))
+        }
+        _ => None,
+    }
+}
+
+fn merge_responses_text_format(
+    rewritten: &mut serde_json::Map<String, serde_json::Value>,
+    source_text: Option<&serde_json::Value>,
+    format: serde_json::Value,
+) {
+    let mut text_obj = source_text
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    text_obj.insert("format".to_string(), format);
+    rewritten.insert("text".to_string(), serde_json::Value::Object(text_obj));
+}
+
 fn adapt_openai_chat_completions_body_to_responses(body: Vec<u8>) -> Result<Vec<u8>, String> {
     let payload = serde_json::from_slice::<serde_json::Value>(&body)
         .map_err(|err| format!("invalid chat completions request json: {err}"))?;
@@ -438,6 +484,25 @@ fn adapt_openai_chat_completions_body_to_responses(body: Vec<u8>) -> Result<Vec<
     rewritten.insert("input".to_string(), serde_json::Value::Array(input));
     if let Some(stream) = obj.get("stream") {
         rewritten.insert("stream".to_string(), stream.clone());
+    }
+    if let Some(max_tokens) = obj
+        .get("max_completion_tokens")
+        .or_else(|| obj.get("max_tokens"))
+    {
+        rewritten.insert("max_output_tokens".to_string(), max_tokens.clone());
+    }
+    for field in ["temperature", "top_p", "stop"] {
+        if let Some(value) = obj.get(field) {
+            rewritten.insert(field.to_string(), value.clone());
+        }
+    }
+    if let Some(format) = obj
+        .get("response_format")
+        .and_then(chat_response_format_to_responses_text_format)
+    {
+        merge_responses_text_format(&mut rewritten, obj.get("text"), format);
+    } else if let Some(text) = obj.get("text") {
+        rewritten.insert("text".to_string(), text.clone());
     }
     if let Some(reasoning) = obj.get("reasoning") {
         rewritten.insert("reasoning".to_string(), reasoning.clone());
@@ -1666,6 +1731,37 @@ pub(super) fn build_local_validation_result(
 #[cfg(test)]
 #[path = "tests/request_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod chat_completions_responses_tests {
+    use super::adapt_openai_chat_completions_body_to_responses;
+    use serde_json::json;
+
+    #[test]
+    fn chat_completions_response_format_json_object_maps_to_responses_text_format() {
+        let body = json!({
+            "model": "gpt-5.4",
+            "messages": [{ "role": "user", "content": "Return JSON only" }],
+            "response_format": { "type": "json_object" },
+            "max_completion_tokens": 256,
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "stop": ["\n\n"]
+        });
+
+        let mapped = adapt_openai_chat_completions_body_to_responses(
+            serde_json::to_vec(&body).expect("body"),
+        )
+        .expect("adapt chat completions request");
+        let value: serde_json::Value = serde_json::from_slice(&mapped).expect("parse mapped body");
+
+        assert_eq!(value["text"]["format"], json!({ "type": "json_object" }));
+        assert_eq!(value["max_output_tokens"], 256);
+        assert_eq!(value["temperature"], 0.2);
+        assert_eq!(value["top_p"], 0.9);
+        assert_eq!(value["stop"], json!(["\n\n"]));
+    }
+}
 
 #[cfg(test)]
 mod images_generation_tests {
