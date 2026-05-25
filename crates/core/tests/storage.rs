@@ -115,6 +115,30 @@ fn storage_can_find_token_and_account_by_account_id() {
 }
 
 #[test]
+fn quota_consumption_daily_accumulates_same_account_same_day() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init schema");
+
+    storage
+        .add_quota_consumption("acc-quota", 1_700_000_000, 1.25)
+        .expect("insert first quota delta");
+    storage
+        .add_quota_consumption("acc-quota", 1_700_000_000, 2.5)
+        .expect("insert second quota delta");
+    storage
+        .add_quota_consumption("acc-quota", 1_700_000_000, 0.0)
+        .expect("ignore zero quota delta");
+
+    let rows = storage
+        .list_quota_consumption_daily_between(1_700_000_000, 1_700_086_400)
+        .expect("read quota daily");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].account_id, "acc-quota");
+    assert_eq!(rows[0].day_start_ts, 1_700_000_000);
+    assert!((rows[0].consumed_percent - 3.75).abs() < 0.000_001);
+}
+
+#[test]
 fn storage_can_upsert_and_resolve_model_source_mappings() {
     let storage = Storage::open_in_memory().expect("open in memory");
     storage.init().expect("init schema");
