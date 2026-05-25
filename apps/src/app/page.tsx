@@ -238,6 +238,38 @@ function formatShortDateRange(
   return `${formatShortDate(startTs)} - ${formatShortDate(endTsExclusive - 1)}`;
 }
 
+const DAY_SECONDS = 24 * 60 * 60;
+
+function findQuotaConsumptionForUsageDay(
+  usagePoint: DashboardDailyUsagePoint,
+  quotaPoints: DailyQuotaConsumptionPoint[],
+): number | null {
+  let bestValue: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const usageMidpoint =
+    usagePoint.dayStartTs + Math.max(1, usagePoint.dayEndTs - usagePoint.dayStartTs) / 2;
+
+  for (const quotaPoint of quotaPoints) {
+    const value = quotaPoint.totalConsumedPercent;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      continue;
+    }
+    if (quotaPoint.dayStartTs === usagePoint.dayStartTs) {
+      return value;
+    }
+    const quotaMidpoint =
+      quotaPoint.dayStartTs +
+      Math.max(1, quotaPoint.dayEndTs - quotaPoint.dayStartTs) / 2;
+    const distance = Math.abs(quotaMidpoint - usageMidpoint);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestValue = value;
+    }
+  }
+
+  return bestDistance <= DAY_SECONDS / 2 ? bestValue : null;
+}
+
 function formatDuration(value: number | null | undefined): string {
   if (value == null) return "-";
   if (value >= 10_000) return `${Math.round(value / 1000)}s`;
@@ -479,13 +511,10 @@ function DailyTokenLineChart({
       color: quotaConsumptionColor,
     },
   } satisfies ChartConfig;
-  const quotaByDay = new Map(
-    quotaPoints.map((point) => [point.dayStartTs, point.totalConsumedPercent]),
-  );
   const chartData = points.map((item) => ({
     date: formatShortDate(item.dayStartTs),
     totalTokens: item.usage.totalTokens,
-    totalConsumedPercent: quotaByDay.get(item.dayStartTs) ?? null,
+    totalConsumedPercent: findQuotaConsumptionForUsageDay(item, quotaPoints),
     estimatedCostUsd: item.usage.estimatedCostUsd,
     requestCount: item.usage.requestCount,
   }));
