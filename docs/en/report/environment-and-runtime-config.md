@@ -84,6 +84,7 @@
 - `CODEXMANAGER_UPSTREAM_PROXY_URL`
 - `CODEXMANAGER_UPSTREAM_TOTAL_TIMEOUT_MS`: gateway request total timeout in milliseconds. Default `0` means the service does not cut requests off by total duration.
 - `CODEXMANAGER_UPSTREAM_STREAM_TIMEOUT_MS`
+- `CODEXMANAGER_USE_WEBSOCKET_UPSTREAM`: makes ChatGPT `/v1/responses` streaming upstream requests try WebSocket first. Default `0`. This is experimental; failures fall back to HTTP streaming and the path uses the configured upstream proxy and connect timeout.
 - `CODEXMANAGER_SSE_KEEPALIVE_INTERVAL_MS`
 - `CODEXMANAGER_PROXY_LIST`
 - `CODEXMANAGER_ROUTE_STRATEGY`
@@ -250,6 +251,7 @@ codexmanager-service-bundle/
 `CODEXMANAGER_UPSTREAM_PROXY_URL` / 设置页“OpenAI 上游代理”当前主要接管的是：
 
 - 网关向上游平台发起的请求
+- ChatGPT upstream WebSocket requests when `CODEXMANAGER_USE_WEBSOCKET_UPSTREAM=1` is enabled
 - 用量查询请求
 - `refresh_token` 刷新 access token 的请求
 

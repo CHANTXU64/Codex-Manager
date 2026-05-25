@@ -821,7 +821,7 @@ fn build_upstream_websocket_url(upstream_base: &str) -> Result<String, WsSession
     Ok(url.to_string())
 }
 
-async fn connect_upstream_websocket_request(
+pub(crate) async fn connect_upstream_websocket_request(
     request: WsClientRequest,
     ws_url: &str,
     proxy_url: Option<&str>,
@@ -832,6 +832,7 @@ async fn connect_upstream_websocket_request(
     ),
     String,
 > {
+    ensure_rustls_crypto_provider();
     let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
         return connect_async_tls_with_config(request, None, false, None)
             .await
