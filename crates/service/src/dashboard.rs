@@ -207,18 +207,25 @@ fn build_daily_quota_consumption(
     range_end: i64,
 ) -> Result<Vec<DailyQuotaConsumptionPoint>, String> {
     let records = storage
-        .list_quota_consumption_daily_between(range_start, range_end)
+        .list_quota_consumption_daily_between(
+            range_start.saturating_sub(DAY_SECONDS * 2),
+            range_end.saturating_add(DAY_SECONDS * 2),
+        )
         .map_err(|err| format!("list quota consumption daily failed: {err}"))?;
-    let mut by_day = BTreeMap::<i64, f64>::new();
-    for record in records {
-        *by_day.entry(record.day_start_ts).or_default() += record.consumed_percent.max(0.0);
-    }
 
     let mut result = Vec::new();
     let mut cursor = range_start;
     while cursor < range_end {
         let next = cursor.saturating_add(DAY_SECONDS).min(range_end);
-        let total = by_day.remove(&cursor).unwrap_or_default();
+        let mut total = 0.0;
+        for record in &records {
+            let diff_to_cursor = (record.day_start_ts - cursor).abs();
+            let diff_to_prev = (record.day_start_ts - cursor.saturating_sub(DAY_SECONDS)).abs();
+            let diff_to_next = (record.day_start_ts - next).abs();
+            if diff_to_cursor <= diff_to_prev && diff_to_cursor < diff_to_next {
+                total += record.consumed_percent.max(0.0);
+            }
+        }
         result.push(DailyQuotaConsumptionPoint {
             day_start_ts: cursor,
             day_end_ts: next,
