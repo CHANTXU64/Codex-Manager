@@ -1564,7 +1564,7 @@ pub struct DashboardAdminUsageSummaryResult {
 pub struct DailyQuotaConsumptionPoint {
     pub day_start_ts: i64,
     pub day_end_ts: i64,
-    pub total_consumed_percent: f64,
+    pub total_consumed_percent: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

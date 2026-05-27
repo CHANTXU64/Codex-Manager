@@ -374,7 +374,7 @@ fn dashboard_admin_usage_summary_serialization_uses_camel_case() {
         daily_quota_consumption: vec![DailyQuotaConsumptionPoint {
             day_start_ts: 1_700_000_000,
             day_end_ts: 1_700_086_400,
-            total_consumed_percent: 3.5,
+            total_consumed_percent: Some(3.5),
         }],
         users: vec![DashboardUserUsageSummary {
             user_id: "usr-1".to_string(),

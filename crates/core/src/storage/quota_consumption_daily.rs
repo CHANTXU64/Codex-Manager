@@ -1,4 +1,4 @@
-use rusqlite::{params, Result, Row};
+use rusqlite::{params, Connection, Result, Row};
 
 use super::{now_ts, Storage};
 
@@ -36,21 +36,7 @@ impl Storage {
         day_start_ts: i64,
         delta_percent: f64,
     ) -> Result<()> {
-        let account_id = account_id.trim();
-        if account_id.is_empty() || delta_percent <= 0.0 {
-            return Ok(());
-        }
-        let updated_at = now_ts();
-        self.conn.execute(
-            "INSERT INTO quota_consumption_daily (
-                account_id, day_start_ts, consumed_percent, updated_at
-             ) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(account_id, day_start_ts) DO UPDATE SET
-                consumed_percent = quota_consumption_daily.consumed_percent + excluded.consumed_percent,
-                updated_at = excluded.updated_at",
-            params![account_id, day_start_ts, delta_percent, updated_at],
-        )?;
-        Ok(())
+        add_quota_consumption_on_connection(&self.conn, account_id, day_start_ts, delta_percent)
     }
 
     pub fn list_quota_consumption_daily_between(
@@ -70,6 +56,29 @@ impl Storage {
         let rows = stmt.query_map(params![start_ts, end_ts], map_quota_consumption_daily_row)?;
         rows.collect()
     }
+}
+
+pub(super) fn add_quota_consumption_on_connection(
+    conn: &Connection,
+    account_id: &str,
+    day_start_ts: i64,
+    delta_percent: f64,
+) -> Result<()> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() || delta_percent <= 0.0 {
+        return Ok(());
+    }
+    let updated_at = now_ts();
+    conn.execute(
+        "INSERT INTO quota_consumption_daily (
+            account_id, day_start_ts, consumed_percent, updated_at
+         ) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(account_id, day_start_ts) DO UPDATE SET
+            consumed_percent = quota_consumption_daily.consumed_percent + excluded.consumed_percent,
+            updated_at = excluded.updated_at",
+        params![account_id, day_start_ts, delta_percent, updated_at],
+    )?;
+    Ok(())
 }
 
 fn map_quota_consumption_daily_row(row: &Row<'_>) -> Result<QuotaConsumptionDailyRecord> {

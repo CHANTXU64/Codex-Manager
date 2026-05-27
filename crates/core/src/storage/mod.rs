@@ -153,6 +153,11 @@ pub struct UsageSnapshotRecord {
     pub captured_at: i64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UsageSnapshotInsertOutcome {
+    pub quota_consumption_error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Event {
     pub account_id: Option<String>,

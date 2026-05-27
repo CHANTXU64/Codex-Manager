@@ -218,18 +218,20 @@ fn build_daily_quota_consumption(
     while cursor < range_end {
         let next = cursor.saturating_add(DAY_SECONDS).min(range_end);
         let mut total = 0.0;
+        let mut matched = false;
         for record in &records {
             let diff_to_cursor = (record.day_start_ts - cursor).abs();
             let diff_to_prev = (record.day_start_ts - cursor.saturating_sub(DAY_SECONDS)).abs();
             let diff_to_next = (record.day_start_ts - next).abs();
             if diff_to_cursor <= diff_to_prev && diff_to_cursor < diff_to_next {
+                matched = true;
                 total += record.consumed_percent.max(0.0);
             }
         }
         result.push(DailyQuotaConsumptionPoint {
             day_start_ts: cursor,
             day_end_ts: next,
-            total_consumed_percent: rounded_percent(total),
+            total_consumed_percent: matched.then_some(rounded_percent(total)),
         });
         cursor = next;
     }

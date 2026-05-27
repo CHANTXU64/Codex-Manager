@@ -61,13 +61,18 @@ export const EN_MESSAGES: MessageCatalog = {
   "7天剩余": "7-day remaining",
   "总 Tokens": "Total Tokens",
   "5 小时额度已消耗": "5-hour quota consumed",
+  "5 小时额度采样消耗": "Sampled 5-hour quota consumption",
   "当日累计消耗": "Consumed that day",
+  "当日采样消耗": "Sampled consumption that day",
+  基于用量快照正向变化估算: "Estimated from positive usage snapshot changes",
   请求数: "Requests",
   "{count} 次请求": "{count} requests",
   "在图表区域使用鼠标滚轮缩放时间区间":
     "Use the mouse wheel over the chart to zoom the time range",
   "按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗，以及 5 小时额度已消耗百分比":
     "Summarize token usage by day, member, OpenAI account, and aggregate API, plus the 5-hour quota consumed percentage",
+  "按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗，以及 5 小时额度采样消耗百分比":
+    "Summarize token usage by day, member, OpenAI account, and aggregate API, plus the sampled 5-hour quota consumption percentage",
   剩余额度: "Remaining quota",
   暂无可识别的活跃账号: "No identifiable active account",
   正在等待服务连接: "Waiting for service connection",

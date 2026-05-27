@@ -82,7 +82,7 @@ function readDailyQuotaConsumptionPoint(value: unknown): DailyQuotaConsumptionPo
   return {
     dayStartTs: asNumber(source.dayStartTs ?? source.day_start_ts),
     dayEndTs: asNumber(source.dayEndTs ?? source.day_end_ts),
-    totalConsumedPercent: asNumber(
+    totalConsumedPercent: nullableNumber(
       source.totalConsumedPercent ?? source.total_consumed_percent,
     ),
   };
@@ -122,7 +122,9 @@ function readSourceUsageSummary(value: unknown): DashboardSourceUsageSummary | n
   };
 }
 
-function readAdminUsageSummary(value: unknown): DashboardAdminUsageSummary {
+export function normalizeDashboardAdminUsageSummary(
+  value: unknown,
+): DashboardAdminUsageSummary {
   const source = asRecord(value);
   return {
     rangeStartTs: asNumber(source.rangeStartTs ?? source.range_start_ts),
@@ -299,7 +301,7 @@ export const dashboardClient = {
         endTs: params?.endTs ?? null,
       }),
     );
-    return readAdminUsageSummary(result);
+    return normalizeDashboardAdminUsageSummary(result);
   },
   async getMemberSummary(params?: {
     userId?: string | null;

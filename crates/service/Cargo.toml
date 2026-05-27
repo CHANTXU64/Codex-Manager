@@ -33,6 +33,7 @@ rhai = "1"
 sysinfo = "0.30"
 
 [dev-dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

@@ -170,22 +170,19 @@ pub(crate) fn store_usage_snapshot(
         credits_json: parsed.credits_json,
         captured_at: now_ts(),
     };
-    let consumption_delta = storage
-        .latest_usage_snapshot_for_account(account_id)
-        .ok()
-        .flatten()
-        .as_ref()
-        .and_then(|prev| compute_consumption_delta(prev, &record));
-    storage
-        .insert_usage_snapshot(&record)
-        .map_err(|e| e.to_string())?;
-    if let Some(delta) = consumption_delta {
-        let day_start = local_day_start_ts(record.captured_at);
-        let _ = storage.add_quota_consumption(account_id, day_start, delta);
-    }
     let retain = usage_snapshots_retain_per_account();
-    if retain > 0 {
-        let _ = storage.prune_usage_snapshots_for_account(account_id, retain);
+    let day_start = local_day_start_ts(record.captured_at);
+    let outcome = storage
+        .insert_usage_snapshot_with_quota_consumption(&record, retain, day_start, |prev, curr| {
+            prev.and_then(|prev| compute_consumption_delta(prev, curr))
+        })
+        .map_err(|e| e.to_string())?;
+    if let Some(err) = outcome.quota_consumption_error {
+        log::warn!(
+            "quota consumption rollup write failed for account {}: {}",
+            account_id,
+            err
+        );
     }
     let _ = apply_status_from_snapshot(storage, &record);
     Ok(())

@@ -22,7 +22,7 @@ export interface DashboardDailyUsagePoint {
 export interface DailyQuotaConsumptionPoint {
   dayStartTs: number;
   dayEndTs: number;
-  totalConsumedPercent: number;
+  totalConsumedPercent: number | null;
 }
 
 export interface DashboardUserUsageSummary {

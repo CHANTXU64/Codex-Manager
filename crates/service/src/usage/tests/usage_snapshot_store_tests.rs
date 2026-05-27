@@ -1,6 +1,61 @@
 use super::store_usage_snapshot;
 use codexmanager_core::storage::{Storage, UsageSnapshotRecord};
 use serde_json::json;
+use std::path::PathBuf;
+use std::sync::{Arc, Barrier, Mutex, Once, OnceLock};
+
+static TEST_LOGGER: UsageSnapshotTestLogger = UsageSnapshotTestLogger;
+static TEST_LOGGER_INIT: Once = Once::new();
+static TEST_LOG_MESSAGES: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+struct UsageSnapshotTestLogger;
+
+impl log::Log for UsageSnapshotTestLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            test_log_messages()
+                .lock()
+                .expect("lock test log messages")
+                .push(format!("{} {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn test_log_messages() -> &'static Mutex<Vec<String>> {
+    TEST_LOG_MESSAGES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn init_test_logger() {
+    TEST_LOGGER_INIT.call_once(|| {
+        let _ = log::set_logger(&TEST_LOGGER);
+    });
+    log::set_max_level(log::LevelFilter::Warn);
+    test_log_messages()
+        .lock()
+        .expect("clear test log messages")
+        .clear();
+}
+
+fn captured_test_logs() -> Vec<String> {
+    test_log_messages()
+        .lock()
+        .expect("read test log messages")
+        .clone()
+}
+
+fn temp_usage_db_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "{name}-{}-{}.db",
+        std::process::id(),
+        codexmanager_core::storage::now_ts()
+    ))
+}
 
 fn usage_payload(used_percent: f64) -> serde_json::Value {
     usage_payload_with_options(used_percent, None, 18_000, "plus")
@@ -170,6 +225,78 @@ fn multiple_positive_snapshots_accumulate_same_day() {
         .expect("store third snapshot");
 
     assert_single_consumption(&storage, "acc-accumulate", 6.0);
+}
+
+#[test]
+fn quota_rollup_write_failure_is_warned_but_snapshot_still_persists() {
+    init_test_logger();
+    let db_path = temp_usage_db_path("codexmanager-usage-rollup-warning");
+    let storage = Storage::open(&db_path).expect("open temp storage");
+    storage.init().expect("init storage");
+    rusqlite::Connection::open(&db_path)
+        .expect("open raw sqlite connection")
+        .execute_batch("DROP TABLE quota_consumption_daily;")
+        .expect("drop quota table");
+
+    store_usage_snapshot(&storage, "acc-rollup-warning", usage_payload(20.0))
+        .expect("store first snapshot");
+    store_usage_snapshot(&storage, "acc-rollup-warning", usage_payload(25.0))
+        .expect("store second snapshot despite missing rollup table");
+
+    assert_eq!(
+        storage
+            .usage_snapshot_count_for_account("acc-rollup-warning")
+            .expect("count snapshots"),
+        1,
+        "snapshot persistence and pruning should continue even if quota rollup fails"
+    );
+    let logs = captured_test_logs();
+    assert!(
+        logs.iter().any(|line| {
+            line.contains("quota consumption")
+                && line.contains("acc-rollup-warning")
+                && line.contains("failed")
+        }),
+        "expected warning about quota rollup failure, got {logs:?}"
+    );
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn concurrent_usage_snapshot_stores_do_not_double_count_same_delta() {
+    let db_path = temp_usage_db_path("codexmanager-usage-concurrency");
+    let storage = Storage::open(&db_path).expect("open temp storage");
+    storage.init().expect("init storage");
+    store_usage_snapshot(&storage, "acc-concurrent", usage_payload(20.0))
+        .expect("store baseline snapshot");
+    drop(storage);
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let db_path = db_path.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            let storage = Storage::open(&db_path).expect("open worker storage");
+            barrier.wait();
+            store_usage_snapshot(&storage, "acc-concurrent", usage_payload(25.0))
+                .expect("store concurrent snapshot");
+        }));
+    }
+    barrier.wait();
+    for handle in handles {
+        handle.join().expect("worker thread");
+    }
+
+    let storage = Storage::open(&db_path).expect("reopen temp storage");
+    let rows = quota_consumption_rows(&storage);
+    let _ = std::fs::remove_file(&db_path);
+    assert_eq!(rows.len(), 1, "expected one quota row, got {rows:?}");
+    assert!(
+        (rows[0].consumed_percent - 5.0).abs() < 0.000_001,
+        "concurrent writes must not double count the same 20 -> 25 delta: got {}",
+        rows[0].consumed_percent
+    );
 }
 
 #[test]

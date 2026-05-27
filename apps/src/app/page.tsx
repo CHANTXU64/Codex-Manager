@@ -458,6 +458,25 @@ function sourceUsageName(item: DashboardSourceUsageSummary): string {
   return item.name || item.sourceId;
 }
 
+function ChartTooltipMetricRow({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex min-w-44 items-center justify-between gap-4 leading-5">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={cn("font-mono text-foreground tabular-nums", valueClassName)}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function sumDashboardTokenUsages(usages: DashboardTokenUsage[]): DashboardTokenUsage {
   return usages.reduce<DashboardTokenUsage>(
     (total, usage) => ({
@@ -507,7 +526,7 @@ function DailyTokenLineChart({
       color: "var(--primary)",
     },
     totalConsumedPercent: {
-      label: t("5 小时额度已消耗"),
+      label: t("5 小时额度采样消耗"),
       color: quotaConsumptionColor,
     },
   } satisfies ChartConfig;
@@ -608,7 +627,7 @@ function DailyTokenLineChart({
               className="h-0.5 w-5 rounded-full"
               style={{ backgroundColor: quotaConsumptionColor }}
             />
-            <span>{t("5 小时额度已消耗")}</span>
+            <span>{t("5 小时额度采样消耗")}</span>
           </span>
         ) : null}
       </div>
@@ -662,13 +681,14 @@ function DailyTokenLineChart({
                   const dataKey = String(item.dataKey ?? name);
                   if (dataKey === "totalConsumedPercent") {
                     return (
-                      <div className="flex min-w-36 items-center justify-between gap-3">
-                        <span className="text-muted-foreground">
-                          {t("当日累计消耗")}
-                        </span>
-                        <span className="font-mono font-medium text-foreground tabular-nums">
-                          {formatQuotaConsumedPercent(Number(value))}
-                        </span>
+                      <div className="grid min-w-44 gap-1.5">
+                        <ChartTooltipMetricRow
+                          label={t("当日采样消耗")}
+                          value={formatQuotaConsumedPercent(Number(value))}
+                        />
+                        <div className="text-[11px] leading-snug text-muted-foreground">
+                          {t("基于用量快照正向变化估算")}
+                        </div>
                       </div>
                     );
                   }
@@ -677,23 +697,20 @@ function DailyTokenLineChart({
                     requestCount?: number;
                   };
                   return (
-                    <div className="grid min-w-36 gap-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">
-                          {dataKey === "totalTokens" ? t("总 Tokens") : String(name)}
-                        </span>
-                        <span className="font-mono font-medium text-foreground">
-                          {formatCompactTokenAmount(Number(value))}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                        <span>{t("预计费用")}</span>
-                        <span>{formatUsd(row.estimatedCostUsd)}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                        <span>{t("请求数")}</span>
-                        <span>{row.requestCount ?? 0}</span>
-                      </div>
+                    <div className="grid min-w-44 gap-1.5">
+                      <ChartTooltipMetricRow
+                        label={dataKey === "totalTokens" ? t("总 Tokens") : String(name)}
+                        value={formatCompactTokenAmount(Number(value))}
+                        valueClassName="font-medium"
+                      />
+                      <ChartTooltipMetricRow
+                        label={t("预计费用")}
+                        value={formatUsd(row.estimatedCostUsd)}
+                      />
+                      <ChartTooltipMetricRow
+                        label={t("请求数")}
+                        value={String(row.requestCount ?? 0)}
+                      />
                     </div>
                   );
                 }}
@@ -913,7 +930,7 @@ function AdminUsageAnalyticsCard({
               {t("管理员用量分析")}
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              {t("按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗，以及 5 小时额度已消耗百分比")}
+              {t("按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗，以及 5 小时额度采样消耗百分比")}
             </p>
             <div className="mt-2 text-[11px] text-muted-foreground">
               {t("当前区间")} {formatShortDateRange(summary.rangeStartTs, summary.rangeEndTs)}

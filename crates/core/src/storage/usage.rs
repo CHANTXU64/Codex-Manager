@@ -1,6 +1,9 @@
-use rusqlite::{Result, Row};
+use rusqlite::{Connection, Result, Row, Transaction, TransactionBehavior};
 
-use super::{Storage, UsageSnapshotRecord};
+use super::{
+    quota_consumption_daily::add_quota_consumption_on_connection, Storage,
+    UsageSnapshotInsertOutcome, UsageSnapshotRecord,
+};
 
 const DEFAULT_USAGE_SNAPSHOTS_RETAIN_PER_ACCOUNT: usize = 1;
 const USAGE_SNAPSHOTS_RETAIN_PER_ACCOUNT_ENV: &str =
@@ -27,21 +30,7 @@ impl Storage {
     /// # 返回
     /// 返回函数执行结果
     pub fn insert_usage_snapshot(&self, snap: &UsageSnapshotRecord) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO usage_snapshots (account_id, used_percent, window_minutes, resets_at, secondary_used_percent, secondary_window_minutes, secondary_resets_at, credits_json, captured_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            (
-                &snap.account_id,
-                snap.used_percent,
-                snap.window_minutes,
-                snap.resets_at,
-                snap.secondary_used_percent,
-                snap.secondary_window_minutes,
-                snap.secondary_resets_at,
-                &snap.credits_json,
-                snap.captured_at,
-            ),
-        )?;
-        Ok(())
+        insert_usage_snapshot_on_connection(&self.conn, snap)
     }
 
     /// 函数 `prune_usage_snapshots_for_account`
@@ -65,18 +54,40 @@ impl Storage {
         if retain == 0 {
             return Ok(0);
         }
-        self.conn.execute(
-            "DELETE FROM usage_snapshots
-             WHERE account_id = ?1
-               AND id NOT IN (
-                 SELECT id
-                 FROM usage_snapshots
-                 WHERE account_id = ?1
-                 ORDER BY captured_at DESC, id DESC
-                 LIMIT ?2
-               )",
-            (account_id, retain as i64),
-        )
+        prune_usage_snapshots_for_account_on_connection(&self.conn, account_id, retain)
+    }
+
+    pub fn insert_usage_snapshot_with_quota_consumption<F>(
+        &self,
+        snap: &UsageSnapshotRecord,
+        retain: usize,
+        quota_day_start_ts: i64,
+        compute_delta: F,
+    ) -> Result<UsageSnapshotInsertOutcome>
+    where
+        F: FnOnce(Option<&UsageSnapshotRecord>, &UsageSnapshotRecord) -> Option<f64>,
+    {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let previous = latest_usage_snapshot_for_account_on_connection(&tx, &snap.account_id)?;
+        let quota_consumption_delta = compute_delta(previous.as_ref(), snap);
+        insert_usage_snapshot_on_connection(&tx, snap)?;
+
+        let quota_consumption_error = if let Some(delta) = quota_consumption_delta {
+            add_quota_consumption_on_connection(&tx, &snap.account_id, quota_day_start_ts, delta)
+                .err()
+                .map(|err| err.to_string())
+        } else {
+            None
+        };
+
+        if retain > 0 {
+            let _ = prune_usage_snapshots_for_account_on_connection(&tx, &snap.account_id, retain);
+        }
+        tx.commit()?;
+
+        Ok(UsageSnapshotInsertOutcome {
+            quota_consumption_error,
+        })
     }
 
     pub fn prune_usage_snapshots_all_accounts(&self, retain: usize) -> Result<usize> {
@@ -160,19 +171,7 @@ impl Storage {
         &self,
         account_id: &str,
     ) -> Result<Option<UsageSnapshotRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT account_id, used_percent, window_minutes, resets_at, secondary_used_percent, secondary_window_minutes, secondary_resets_at, credits_json, captured_at
-             FROM usage_snapshots
-             WHERE account_id = ?1
-             ORDER BY captured_at DESC, id DESC
-             LIMIT 1",
-        )?;
-        let mut rows = stmt.query([account_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(map_usage_snapshot_row(row)?))
-        } else {
-            Ok(None)
-        }
+        latest_usage_snapshot_for_account_on_connection(&self.conn, account_id)
     }
 
     /// 函数 `latest_usage_snapshots_by_account`
@@ -246,6 +245,65 @@ impl Storage {
         self.ensure_column("usage_snapshots", "secondary_window_minutes", "INTEGER")?;
         self.ensure_column("usage_snapshots", "secondary_resets_at", "INTEGER")?;
         Ok(())
+    }
+}
+
+fn insert_usage_snapshot_on_connection(
+    conn: &Connection,
+    snap: &UsageSnapshotRecord,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO usage_snapshots (account_id, used_percent, window_minutes, resets_at, secondary_used_percent, secondary_window_minutes, secondary_resets_at, credits_json, captured_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        (
+            &snap.account_id,
+            snap.used_percent,
+            snap.window_minutes,
+            snap.resets_at,
+            snap.secondary_used_percent,
+            snap.secondary_window_minutes,
+            snap.secondary_resets_at,
+            &snap.credits_json,
+            snap.captured_at,
+        ),
+    )?;
+    Ok(())
+}
+
+fn prune_usage_snapshots_for_account_on_connection(
+    conn: &Connection,
+    account_id: &str,
+    retain: usize,
+) -> Result<usize> {
+    conn.execute(
+        "DELETE FROM usage_snapshots
+         WHERE account_id = ?1
+           AND id NOT IN (
+             SELECT id
+             FROM usage_snapshots
+             WHERE account_id = ?1
+             ORDER BY captured_at DESC, id DESC
+             LIMIT ?2
+           )",
+        (account_id, retain as i64),
+    )
+}
+
+fn latest_usage_snapshot_for_account_on_connection(
+    conn: &Connection,
+    account_id: &str,
+) -> Result<Option<UsageSnapshotRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT account_id, used_percent, window_minutes, resets_at, secondary_used_percent, secondary_window_minutes, secondary_resets_at, credits_json, captured_at
+         FROM usage_snapshots
+         WHERE account_id = ?1
+         ORDER BY captured_at DESC, id DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query([account_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(map_usage_snapshot_row(row)?))
+    } else {
+        Ok(None)
     }
 }
 
