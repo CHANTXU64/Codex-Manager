@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{Duration, Local, LocalResult, TimeZone};
 use codexmanager_core::rpc::types::{
-    ApiKeySummary, DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint,
-    DashboardSourceUsageSummary, DashboardTokenUsageResult, DashboardUserUsageSummary,
-    MemberDashboardAlert, MemberDashboardApiKeySummary, MemberDashboardKeyUsage,
-    MemberDashboardModelUsage, MemberDashboardSummaryResult, MemberDashboardUsagePoint,
-    MemberDashboardUsageToday, MemberDashboardWalletResult, ModelInfo, RequestLogListParams,
+    ApiKeySummary, DailyQuotaConsumptionPoint, DashboardAdminUsageSummaryResult,
+    DashboardDailyUsagePoint, DashboardSourceUsageSummary, DashboardTokenUsageResult,
+    DashboardUserUsageSummary, MemberDashboardAlert, MemberDashboardApiKeySummary,
+    MemberDashboardKeyUsage, MemberDashboardModelUsage, MemberDashboardSummaryResult,
+    MemberDashboardUsagePoint, MemberDashboardUsageToday, MemberDashboardWalletResult, ModelInfo,
+    RequestLogListParams,
 };
 use codexmanager_core::storage::{
     DailyTokenUsageRollup, SourceTokenUsageRollup, TokenUsageRollup, UserTokenUsageRollup,
@@ -104,6 +105,7 @@ pub(crate) fn read_admin_usage_summary(
             )
             .map_err(|err| format!("summarize range aggregate API usage failed: {err}"))?,
     );
+    let daily_quota_consumption = build_daily_quota_consumption(&storage, range_start, range_end)?;
 
     Ok(DashboardAdminUsageSummaryResult {
         range_start_ts: range_start,
@@ -112,6 +114,7 @@ pub(crate) fn read_admin_usage_summary(
         today_end_ts: today_end,
         today_usage: dashboard_usage(&today_usage),
         daily_usage,
+        daily_quota_consumption,
         users,
         openai_accounts,
         aggregate_apis,
@@ -192,6 +195,47 @@ fn fill_daily_usage(
         cursor = next;
     }
     result
+}
+
+fn rounded_percent(value: f64) -> f64 {
+    (value.max(0.0) * 100.0).round() / 100.0
+}
+
+fn build_daily_quota_consumption(
+    storage: &codexmanager_core::storage::Storage,
+    range_start: i64,
+    range_end: i64,
+) -> Result<Vec<DailyQuotaConsumptionPoint>, String> {
+    let records = storage
+        .list_quota_consumption_daily_between(
+            range_start.saturating_sub(DAY_SECONDS * 2),
+            range_end.saturating_add(DAY_SECONDS * 2),
+        )
+        .map_err(|err| format!("list quota consumption daily failed: {err}"))?;
+
+    let mut result = Vec::new();
+    let mut cursor = range_start;
+    while cursor < range_end {
+        let next = cursor.saturating_add(DAY_SECONDS).min(range_end);
+        let mut total = 0.0;
+        let mut matched = false;
+        for record in &records {
+            let diff_to_cursor = (record.day_start_ts - cursor).abs();
+            let diff_to_prev = (record.day_start_ts - cursor.saturating_sub(DAY_SECONDS)).abs();
+            let diff_to_next = (record.day_start_ts - next).abs();
+            if diff_to_cursor <= diff_to_prev && diff_to_cursor < diff_to_next {
+                matched = true;
+                total += record.consumed_percent.max(0.0);
+            }
+        }
+        result.push(DailyQuotaConsumptionPoint {
+            day_start_ts: cursor,
+            day_end_ts: next,
+            total_consumed_percent: matched.then_some(rounded_percent(total)),
+        });
+        cursor = next;
+    }
+    Ok(result)
 }
 
 fn build_dashboard_user_summaries(

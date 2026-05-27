@@ -81,6 +81,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Line as RechartsLine,
   XAxis,
   YAxis,
 } from "recharts";
@@ -90,6 +91,7 @@ import type {
   DashboardSourceUsageSummary,
   DashboardTokenUsage,
   DashboardUserUsageSummary,
+  DailyQuotaConsumptionPoint,
   MemberDashboardAlert,
   MemberDashboardKeyUsage,
   MemberDashboardSummary,
@@ -234,6 +236,38 @@ function formatShortDateRange(
     return "--";
   }
   return `${formatShortDate(startTs)} - ${formatShortDate(endTsExclusive - 1)}`;
+}
+
+const DAY_SECONDS = 24 * 60 * 60;
+
+function findQuotaConsumptionForUsageDay(
+  usagePoint: DashboardDailyUsagePoint,
+  quotaPoints: DailyQuotaConsumptionPoint[],
+): number | null {
+  let bestValue: number | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const usageMidpoint =
+    usagePoint.dayStartTs + Math.max(1, usagePoint.dayEndTs - usagePoint.dayStartTs) / 2;
+
+  for (const quotaPoint of quotaPoints) {
+    const value = quotaPoint.totalConsumedPercent;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      continue;
+    }
+    if (quotaPoint.dayStartTs === usagePoint.dayStartTs) {
+      return value;
+    }
+    const quotaMidpoint =
+      quotaPoint.dayStartTs +
+      Math.max(1, quotaPoint.dayEndTs - quotaPoint.dayStartTs) / 2;
+    const distance = Math.abs(quotaMidpoint - usageMidpoint);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestValue = value;
+    }
+  }
+
+  return bestDistance <= DAY_SECONDS / 2 ? bestValue : null;
 }
 
 function formatDuration(value: number | null | undefined): string {
@@ -424,6 +458,25 @@ function sourceUsageName(item: DashboardSourceUsageSummary): string {
   return item.name || item.sourceId;
 }
 
+function ChartTooltipMetricRow({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex min-w-44 items-center justify-between gap-4 leading-5">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={cn("font-mono text-foreground tabular-nums", valueClassName)}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function sumDashboardTokenUsages(usages: DashboardTokenUsage[]): DashboardTokenUsage {
   return usages.reduce<DashboardTokenUsage>(
     (total, usage) => ({
@@ -454,27 +507,41 @@ function sumDashboardTokenUsages(usages: DashboardTokenUsage[]): DashboardTokenU
 
 function DailyTokenLineChart({
   points,
+  quotaPoints = [],
   className,
   zoomWindow,
   onZoomWindowChange,
 }: {
   points: DashboardDailyUsagePoint[];
+  quotaPoints?: DailyQuotaConsumptionPoint[];
   className?: string;
   zoomWindow?: { startIndex: number; endIndex: number } | null;
   onZoomWindowChange?: (next: { startIndex: number; endIndex: number } | null) => void;
 }) {
+  const { t } = useI18n();
+  const quotaConsumptionColor = "hsl(170 65% 42%)";
   const chartConfig = {
     totalTokens: {
-      label: "Token",
+      label: t("总 Tokens"),
       color: "var(--primary)",
+    },
+    totalConsumedPercent: {
+      label: t("5 小时额度采样消耗"),
+      color: quotaConsumptionColor,
     },
   } satisfies ChartConfig;
   const chartData = points.map((item) => ({
     date: formatShortDate(item.dayStartTs),
     totalTokens: item.usage.totalTokens,
+    totalConsumedPercent: findQuotaConsumptionForUsageDay(item, quotaPoints),
     estimatedCostUsd: item.usage.estimatedCostUsd,
     requestCount: item.usage.requestCount,
   }));
+  const hasQuotaConsumptionData = chartData.some(
+    (item) =>
+      typeof item.totalConsumedPercent === "number" &&
+      Number.isFinite(item.totalConsumedPercent),
+  );
   const normalizedZoomWindow = useMemo(() => {
     if (chartData.length === 0) return null;
     const startIndex = Math.max(
@@ -544,8 +611,26 @@ function DailyTokenLineChart({
     <div
       className="rounded-xl"
       onWheel={handleWheelZoom}
-      title="在图表区域使用鼠标滚轮缩放时间区间"
+      title={t("在图表区域使用鼠标滚轮缩放时间区间")}
     >
+      <div className="mb-2 flex flex-wrap items-center justify-end gap-3 px-1 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            className="h-0.5 w-5 rounded-full"
+            style={{ backgroundColor: "var(--primary)" }}
+          />
+          <span>{t("总 Tokens")}</span>
+        </span>
+        {hasQuotaConsumptionData ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="h-0.5 w-5 rounded-full"
+              style={{ backgroundColor: quotaConsumptionColor }}
+            />
+            <span>{t("5 小时额度采样消耗")}</span>
+          </span>
+        ) : null}
+      </div>
       <ChartContainer
         config={chartConfig}
         className={cn("h-64 w-full rounded-xl bg-background/30 p-3", className)}
@@ -579,6 +664,7 @@ function DailyTokenLineChart({
             minTickGap={18}
           />
           <YAxis
+            yAxisId="tokens"
             tickLine={false}
             axisLine={false}
             tickMargin={10}
@@ -592,26 +678,39 @@ function DailyTokenLineChart({
                 indicator="line"
                 labelFormatter={(value) => value}
                 formatter={(value, name, item) => {
+                  const dataKey = String(item.dataKey ?? name);
+                  if (dataKey === "totalConsumedPercent") {
+                    return (
+                      <div className="grid min-w-44 gap-1.5">
+                        <ChartTooltipMetricRow
+                          label={t("当日采样消耗")}
+                          value={formatQuotaConsumedPercent(Number(value))}
+                        />
+                        <div className="text-[11px] leading-snug text-muted-foreground">
+                          {t("基于用量快照正向变化估算")}
+                        </div>
+                      </div>
+                    );
+                  }
                   const row = item.payload as {
                     estimatedCostUsd?: number;
                     requestCount?: number;
                   };
                   return (
-                    <div className="grid min-w-36 gap-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-muted-foreground">{String(name)}</span>
-                        <span className="font-mono font-medium text-foreground">
-                          {formatCompactTokenAmount(Number(value))}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                        <span>Cost</span>
-                        <span>{formatUsd(row.estimatedCostUsd)}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                        <span>Requests</span>
-                        <span>{row.requestCount ?? 0}</span>
-                      </div>
+                    <div className="grid min-w-44 gap-1.5">
+                      <ChartTooltipMetricRow
+                        label={dataKey === "totalTokens" ? t("总 Tokens") : String(name)}
+                        value={formatCompactTokenAmount(Number(value))}
+                        valueClassName="font-medium"
+                      />
+                      <ChartTooltipMetricRow
+                        label={t("预计费用")}
+                        value={formatUsd(row.estimatedCostUsd)}
+                      />
+                      <ChartTooltipMetricRow
+                        label={t("请求数")}
+                        value={String(row.requestCount ?? 0)}
+                      />
                     </div>
                   );
                 }}
@@ -619,6 +718,7 @@ function DailyTokenLineChart({
             }
           />
           <Area
+            yAxisId="tokens"
             dataKey="totalTokens"
             type="monotone"
             fill="url(#fillTotalTokens)"
@@ -627,10 +727,39 @@ function DailyTokenLineChart({
             dot={{ r: 4, strokeWidth: 2, fill: "var(--background)" }}
             activeDot={{ r: 6, strokeWidth: 2 }}
           />
+          {hasQuotaConsumptionData ? (
+            <>
+              <YAxis
+                yAxisId="quota"
+                orientation="right"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={10}
+                width={48}
+                tickFormatter={(value) => formatQuotaConsumedPercent(Number(value))}
+              />
+              <RechartsLine
+                yAxisId="quota"
+                dataKey="totalConsumedPercent"
+                type="monotone"
+                stroke="var(--color-totalConsumedPercent)"
+                strokeWidth={3}
+                dot={{ r: 4, strokeWidth: 2, fill: "var(--background)" }}
+                activeDot={{ r: 6, strokeWidth: 2 }}
+                connectNulls={false}
+              />
+            </>
+          ) : null}
         </AreaChart>
       </ChartContainer>
     </div>
   );
+}
+
+function formatQuotaConsumedPercent(value: number | null | undefined): string {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+  return `${normalized.toFixed(1)}%`;
 }
 
 function UsageRankList<T extends { todayUsage: DashboardTokenUsage; rangeUsage: DashboardTokenUsage }>({
@@ -646,6 +775,7 @@ function UsageRankList<T extends { todayUsage: DashboardTokenUsage; rangeUsage: 
   emptyText: string;
   usageForItem?: (item: T) => DashboardTokenUsage;
 }) {
+  const { t } = useI18n();
   return (
     <div className="min-w-0">
       <div className="mb-2 text-xs font-semibold text-muted-foreground">{title}</div>
@@ -667,7 +797,8 @@ function UsageRankList<T extends { todayUsage: DashboardTokenUsage; rangeUsage: 
                 <div className="min-w-0">
                   <div className="truncate font-medium">{labelForItem(item)}</div>
                   <div className="truncate text-muted-foreground">
-                    {usage.requestCount} req · {formatUsd(usage.estimatedCostUsd)}
+                    {t("{count} 次请求", { count: usage.requestCount })} ·{" "}
+                    {formatUsd(usage.estimatedCostUsd)}
                   </div>
                 </div>
                 <div className="shrink-0 text-right font-semibold">
@@ -799,7 +930,7 @@ function AdminUsageAnalyticsCard({
               {t("管理员用量分析")}
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              {t("按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗")}
+              {t("按天、成员、OpenAI 账号和聚合 API 汇总 token 消耗，以及 5 小时额度采样消耗百分比")}
             </p>
             <div className="mt-2 text-[11px] text-muted-foreground">
               {t("当前区间")} {formatShortDateRange(summary.rangeStartTs, summary.rangeEndTs)}
@@ -878,6 +1009,7 @@ function AdminUsageAnalyticsCard({
         <div className="space-y-3">
           <DailyTokenLineChart
             points={summary.dailyUsage}
+            quotaPoints={summary.dailyQuotaConsumption}
             zoomWindow={zoomWindow}
             onZoomWindowChange={setZoomWindow}
           />

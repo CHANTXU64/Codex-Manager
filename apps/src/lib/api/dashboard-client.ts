@@ -6,6 +6,7 @@ import type {
   DashboardSourceUsageSummary,
   DashboardTokenUsage,
   DashboardUserUsageSummary,
+  DailyQuotaConsumptionPoint,
   MemberDashboardAlert,
   MemberDashboardApiKeySummary,
   MemberDashboardKeyUsage,
@@ -76,6 +77,17 @@ function readDailyUsagePoint(value: unknown): DashboardDailyUsagePoint {
   };
 }
 
+function readDailyQuotaConsumptionPoint(value: unknown): DailyQuotaConsumptionPoint {
+  const source = asRecord(value);
+  return {
+    dayStartTs: asNumber(source.dayStartTs ?? source.day_start_ts),
+    dayEndTs: asNumber(source.dayEndTs ?? source.day_end_ts),
+    totalConsumedPercent: nullableNumber(
+      source.totalConsumedPercent ?? source.total_consumed_percent,
+    ),
+  };
+}
+
 function readUserUsageSummary(value: unknown): DashboardUserUsageSummary | null {
   const source = asRecord(value);
   const userId = asString(source.userId ?? source.user_id);
@@ -110,7 +122,9 @@ function readSourceUsageSummary(value: unknown): DashboardSourceUsageSummary | n
   };
 }
 
-function readAdminUsageSummary(value: unknown): DashboardAdminUsageSummary {
+export function normalizeDashboardAdminUsageSummary(
+  value: unknown,
+): DashboardAdminUsageSummary {
   const source = asRecord(value);
   return {
     rangeStartTs: asNumber(source.rangeStartTs ?? source.range_start_ts),
@@ -121,6 +135,9 @@ function readAdminUsageSummary(value: unknown): DashboardAdminUsageSummary {
     dailyUsage: asArray(source.dailyUsage ?? source.daily_usage).map(
       readDailyUsagePoint,
     ),
+    dailyQuotaConsumption: asArray(
+      source.dailyQuotaConsumption ?? source.daily_quota_consumption,
+    ).map(readDailyQuotaConsumptionPoint),
     users: asArray(source.users)
       .map(readUserUsageSummary)
       .filter((item): item is DashboardUserUsageSummary => Boolean(item)),
@@ -284,7 +301,7 @@ export const dashboardClient = {
         endTs: params?.endTs ?? null,
       }),
     );
-    return readAdminUsageSummary(result);
+    return normalizeDashboardAdminUsageSummary(result);
   },
   async getMemberSummary(params?: {
     userId?: string | null;

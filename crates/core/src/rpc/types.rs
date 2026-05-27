@@ -1550,11 +1550,21 @@ pub struct DashboardAdminUsageSummaryResult {
     #[serde(default)]
     pub daily_usage: Vec<DashboardDailyUsagePoint>,
     #[serde(default)]
+    pub daily_quota_consumption: Vec<DailyQuotaConsumptionPoint>,
+    #[serde(default)]
     pub users: Vec<DashboardUserUsageSummary>,
     #[serde(default)]
     pub openai_accounts: Vec<DashboardSourceUsageSummary>,
     #[serde(default)]
     pub aggregate_apis: Vec<DashboardSourceUsageSummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyQuotaConsumptionPoint {
+    pub day_start_ts: i64,
+    pub day_end_ts: i64,
+    pub total_consumed_percent: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

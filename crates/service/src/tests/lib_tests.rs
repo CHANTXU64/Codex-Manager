@@ -735,6 +735,10 @@ fn admin_usage_summary_requires_admin_and_returns_range_rollups() {
         0.03,
         day_start + 10,
     );
+    let storage = storage_helpers::open_storage().expect("open storage");
+    storage
+        .add_quota_consumption("private-account-id", day_start, 3.5)
+        .expect("insert quota consumption");
 
     let member_resp = response_result(handle_request_with_actor(
         rpc_request(
@@ -778,6 +782,13 @@ fn admin_usage_summary_requires_admin_and_returns_range_rollups() {
         admin_resp.result["dailyUsage"][0]["usage"]["requestCount"],
         1
     );
+    assert_eq!(
+        admin_resp.result["dailyQuotaConsumption"][0]["totalConsumedPercent"],
+        3.5
+    );
+    assert!(admin_resp.result["dailyQuotaConsumption"][0]
+        .get("byAccount")
+        .is_none());
 
     let user_item = admin_resp.result["users"]
         .as_array()
@@ -794,6 +805,56 @@ fn admin_usage_summary_requires_admin_and_returns_range_rollups() {
         .find(|item| item["sourceId"] == "private-account-id")
         .expect("account usage item");
     assert_eq!(account_item["rangeUsage"]["totalTokens"], 30);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn admin_usage_summary_marks_quota_consumption_missing_without_rollup() {
+    let _guard = test_env_guard();
+    let db_path = setup_dashboard_test_db("codexmanager-admin-usage-summary-no-quota");
+    let day_start = 1_700_000_000;
+    let day_end = day_start + 86_400;
+    let user = create_test_member("admin-usage-no-quota-member", Some(2_000_000));
+    let key_id = create_owned_test_api_key(&user.id, "admin no quota key", "gpt-5-mini");
+
+    insert_test_request_log(
+        &key_id,
+        "trace-admin-usage-no-quota",
+        "gpt-5-mini",
+        200,
+        20,
+        5,
+        10,
+        0.03,
+        day_start + 10,
+    );
+
+    let admin_resp = response_result(handle_request_with_actor(
+        rpc_request(
+            "dashboard/adminUsageSummary",
+            serde_json::json!({
+                "startTs": day_start,
+                "endTs": day_end
+            }),
+        ),
+        RpcActor::system_admin(),
+    ));
+
+    assert!(
+        admin_resp.result.get("error").is_none(),
+        "{:?}",
+        admin_resp.result
+    );
+    assert_eq!(
+        admin_resp.result["dailyUsage"][0]["usage"]["totalTokens"],
+        30
+    );
+    assert!(
+        admin_resp.result["dailyQuotaConsumption"][0]["totalConsumedPercent"].is_null(),
+        "missing quota rollup must not be reported as a real 0% consumption: {:?}",
+        admin_resp.result["dailyQuotaConsumption"]
+    );
 
     let _ = std::fs::remove_file(db_path);
 }

@@ -1,8 +1,8 @@
 use super::{
     AccountListParams, AccountListResult, AccountSummary, ApiKeyUsageStatSummary,
-    DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint, DashboardSourceUsageSummary,
-    DashboardTokenUsageResult, DashboardUserUsageSummary, RequestLogFilterSummaryResult,
-    RequestLogListParams, RequestLogListResult, RequestLogSummary,
+    DailyQuotaConsumptionPoint, DashboardAdminUsageSummaryResult, DashboardDailyUsagePoint,
+    DashboardSourceUsageSummary, DashboardTokenUsageResult, DashboardUserUsageSummary,
+    RequestLogFilterSummaryResult, RequestLogListParams, RequestLogListResult, RequestLogSummary,
 };
 
 /// 函数 `account_summary_serialization_matches_compact_contract`
@@ -371,6 +371,11 @@ fn dashboard_admin_usage_summary_serialization_uses_camel_case() {
             day_end_ts: 1_700_086_400,
             usage: usage.clone(),
         }],
+        daily_quota_consumption: vec![DailyQuotaConsumptionPoint {
+            day_start_ts: 1_700_000_000,
+            day_end_ts: 1_700_086_400,
+            total_consumed_percent: Some(3.5),
+        }],
         users: vec![DashboardUserUsageSummary {
             user_id: "usr-1".to_string(),
             username: Some("member-one".to_string()),
@@ -410,6 +415,7 @@ fn dashboard_admin_usage_summary_serialization_uses_camel_case() {
         "todayEndTs",
         "todayUsage",
         "dailyUsage",
+        "dailyQuotaConsumption",
         "openaiAccounts",
         "aggregateApis",
     ] {
@@ -418,4 +424,8 @@ fn dashboard_admin_usage_summary_serialization_uses_camel_case() {
     assert!(obj["todayUsage"].get("inputTokens").is_some());
     assert!(obj["users"][0].get("walletAvailableCreditMicros").is_some());
     assert!(obj["openaiAccounts"][0].get("sourceKind").is_some());
+    assert!(obj["dailyQuotaConsumption"][0]
+        .get("totalConsumedPercent")
+        .is_some());
+    assert!(obj["dailyQuotaConsumption"][0].get("byAccount").is_none());
 }
