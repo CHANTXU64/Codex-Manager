@@ -23,6 +23,7 @@ static ACCOUNT_MAX_INFLIGHT: AtomicUsize = AtomicUsize::new(DEFAULT_ACCOUNT_MAX_
 static STRICT_REQUEST_PARAM_ALLOWLIST: AtomicBool =
     AtomicBool::new(DEFAULT_STRICT_REQUEST_PARAM_ALLOWLIST);
 static ENABLE_REQUEST_COMPRESSION: AtomicBool = AtomicBool::new(DEFAULT_ENABLE_REQUEST_COMPRESSION);
+static USE_WEBSOCKET_UPSTREAM: AtomicBool = AtomicBool::new(DEFAULT_USE_WEBSOCKET_UPSTREAM);
 static CODEX_IMAGE_GENERATION_ENABLED: AtomicBool =
     AtomicBool::new(DEFAULT_CODEX_IMAGE_GENERATION_ENABLED);
 static CODEX_IMAGE_GENERATION_AUTO_INJECT_TOOL: AtomicBool =
@@ -48,6 +49,7 @@ const DEFAULT_UPSTREAM_STREAM_TIMEOUT_MS: u64 = 300_000;
 const DEFAULT_ACCOUNT_MAX_INFLIGHT: usize = 0;
 const DEFAULT_STRICT_REQUEST_PARAM_ALLOWLIST: bool = false;
 const DEFAULT_ENABLE_REQUEST_COMPRESSION: bool = true;
+const DEFAULT_USE_WEBSOCKET_UPSTREAM: bool = false;
 const DEFAULT_CODEX_IMAGE_GENERATION_ENABLED: bool = true;
 const DEFAULT_CODEX_IMAGE_GENERATION_AUTO_INJECT_TOOL: bool = true;
 const DEFAULT_REQUEST_GATE_WAIT_TIMEOUT_MS: u64 = 0;
@@ -72,6 +74,7 @@ const ENV_UPSTREAM_STREAM_TIMEOUT_MS: &str = "CODEXMANAGER_UPSTREAM_STREAM_TIMEO
 const ENV_ACCOUNT_MAX_INFLIGHT: &str = "CODEXMANAGER_ACCOUNT_MAX_INFLIGHT";
 const ENV_STRICT_REQUEST_PARAM_ALLOWLIST: &str = "CODEXMANAGER_STRICT_REQUEST_PARAM_ALLOWLIST";
 const ENV_ENABLE_REQUEST_COMPRESSION: &str = "CODEXMANAGER_ENABLE_REQUEST_COMPRESSION";
+const ENV_USE_WEBSOCKET_UPSTREAM: &str = "CODEXMANAGER_USE_WEBSOCKET_UPSTREAM";
 const ENV_CODEX_IMAGE_GENERATION_ENABLED: &str = "CODEXMANAGER_CODEX_IMAGE_GENERATION_ENABLED";
 const ENV_CODEX_IMAGE_GENERATION_AUTO_INJECT_TOOL: &str =
     "CODEXMANAGER_CODEX_IMAGE_GENERATION_AUTO_INJECT_TOOL";
@@ -252,6 +255,11 @@ fn upstream_connect_timeout_cached() -> Duration {
     Duration::from_secs(UPSTREAM_CONNECT_TIMEOUT_SECS.load(Ordering::Relaxed))
 }
 
+pub(crate) fn current_upstream_connect_timeout() -> Duration {
+    ensure_runtime_config_loaded();
+    upstream_connect_timeout_cached()
+}
+
 /// 函数 `build_upstream_client`
 ///
 /// 作者: gaohongshun
@@ -414,8 +422,11 @@ pub(crate) fn current_upstream_total_timeout_ms() -> u64 {
 /// # 参数
 /// - crate: 参数 crate
 ///
-/// # 返回
-/// 返回函数执行结果
+pub(crate) fn use_websocket_upstream() -> bool {
+    ensure_runtime_config_loaded();
+    USE_WEBSOCKET_UPSTREAM.load(Ordering::Relaxed)
+}
+
 pub(crate) fn request_compression_enabled() -> bool {
     ensure_runtime_config_loaded();
     ENABLE_REQUEST_COMPRESSION.load(Ordering::Relaxed)
@@ -1127,6 +1138,10 @@ pub(super) fn reload_from_env() {
             ENV_ENABLE_REQUEST_COMPRESSION,
             DEFAULT_ENABLE_REQUEST_COMPRESSION,
         ),
+        Ordering::Relaxed,
+    );
+    USE_WEBSOCKET_UPSTREAM.store(
+        env_bool_or(ENV_USE_WEBSOCKET_UPSTREAM, DEFAULT_USE_WEBSOCKET_UPSTREAM),
         Ordering::Relaxed,
     );
     CODEX_IMAGE_GENERATION_ENABLED.store(

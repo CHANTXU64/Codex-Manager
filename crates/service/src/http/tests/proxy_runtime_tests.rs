@@ -10,6 +10,7 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::oneshot;
 use tokio_tungstenite::accept_hdr_async;
@@ -22,6 +23,8 @@ struct EnvGuard {
     key: &'static str,
     original: Option<std::ffi::OsString>,
 }
+
+static TEST_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl EnvGuard {
     /// 函数 `set`
@@ -251,8 +254,15 @@ fn new_test_db_path(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("unix ts")
         .as_nanos();
+    let counter = TEST_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
-    path.push(format!("{prefix}-{nonce}.db"));
+    path.push(format!(
+        "{prefix}-{}-{counter}-{nonce}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(path.with_extension("db-shm"));
     path
 }
 
@@ -829,7 +839,10 @@ async fn official_responses_websocket_proxies_frames_and_headers() {
             .map(String::as_str),
         Some("chatgpt_proxy_runtime_ws")
     );
-    assert_eq!(capture.headers.get("openai-beta").map(String::as_str), None);
+    assert_eq!(
+        capture.headers.get("openai-beta").map(String::as_str),
+        Some("responses_websockets=2026-02-06")
+    );
     assert_eq!(capture.headers.get("version").map(String::as_str), None);
     assert_eq!(
         capture

@@ -70,7 +70,7 @@ where
                 super::super::super::CooldownReason::Network,
             );
             log_gateway_result(Some(url), 502, Some(err_msg.as_str()));
-            if has_more_candidates && !super::super::config::is_official_openai_target(url) {
+            if should_failover_transport_error(url, has_more_candidates) {
                 PrimaryAttemptResult::Failover
             } else {
                 PrimaryAttemptResult::Terminal {
@@ -79,5 +79,51 @@ where
                 }
             }
         }
+    }
+}
+
+fn should_failover_transport_error(url: &str, has_more_candidates: bool) -> bool {
+    if !has_more_candidates {
+        return false;
+    }
+
+    super::super::config::is_chatgpt_backend_base(url)
+        || !super::super::config::is_official_openai_target(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_failover_transport_error;
+
+    #[test]
+    fn chatgpt_transport_error_fails_over_when_more_candidates_exist() {
+        assert!(should_failover_transport_error(
+            "https://chatgpt.com/backend-api/codex/responses",
+            true
+        ));
+    }
+
+    #[test]
+    fn chatgpt_transport_error_stops_without_more_candidates() {
+        assert!(!should_failover_transport_error(
+            "https://chatgpt.com/backend-api/codex/responses",
+            false
+        ));
+    }
+
+    #[test]
+    fn openai_api_transport_error_keeps_terminal_behavior() {
+        assert!(!should_failover_transport_error(
+            "https://api.openai.com/v1/responses",
+            true
+        ));
+    }
+
+    #[test]
+    fn custom_upstream_transport_error_keeps_existing_failover_behavior() {
+        assert!(should_failover_transport_error(
+            "https://example.test/v1/responses",
+            true
+        ));
     }
 }

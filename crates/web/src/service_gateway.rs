@@ -626,6 +626,13 @@ mod tests {
         ENV_GATEWAY_PROXY_MAX_BODY_BYTES,
     };
     use axum::http::{header, HeaderValue, Uri};
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_test_lock() -> MutexGuard<'static, ()> {
+        ENV_TEST_LOCK.lock().expect("env test lock")
+    }
 
     struct EnvGuard {
         key: &'static str,
@@ -675,6 +682,7 @@ mod tests {
 
     #[test]
     fn gateway_proxy_body_limit_defaults_to_unbounded() {
+        let _lock = env_test_lock();
         let _guard = EnvGuard::clear(ENV_GATEWAY_PROXY_MAX_BODY_BYTES);
 
         assert_eq!(gateway_proxy_max_body_bytes(), 0);
@@ -682,6 +690,7 @@ mod tests {
 
     #[test]
     fn gateway_proxy_body_limit_allows_env_override() {
+        let _lock = env_test_lock();
         let _guard = EnvGuard::set(ENV_GATEWAY_PROXY_MAX_BODY_BYTES, "536870912");
 
         assert_eq!(gateway_proxy_max_body_bytes(), 536_870_912);

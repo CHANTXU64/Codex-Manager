@@ -27,6 +27,7 @@ use crate::http::proxy_response::{text_error_response, text_response};
 use crate::storage_helpers::{hash_platform_key, open_storage};
 
 const RESPONSES_WS_ERROR_CODE: &str = "responses_websocket_error";
+const RESPONSES_WEBSOCKETS_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 
 #[derive(Clone)]
 struct WsRequestContext {
@@ -821,7 +822,7 @@ fn build_upstream_websocket_url(upstream_base: &str) -> Result<String, WsSession
     Ok(url.to_string())
 }
 
-async fn connect_upstream_websocket_request(
+pub(crate) async fn connect_upstream_websocket_request(
     request: WsClientRequest,
     ws_url: &str,
     proxy_url: Option<&str>,
@@ -832,6 +833,7 @@ async fn connect_upstream_websocket_request(
     ),
     String,
 > {
+    ensure_rustls_crypto_provider();
     let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
         return connect_async_tls_with_config(request, None, false, None)
             .await
@@ -1136,6 +1138,11 @@ fn build_upstream_websocket_request(
         headers,
         "originator",
         &crate::gateway::current_wire_originator(),
+    )?;
+    insert_header(
+        headers,
+        "OpenAI-Beta",
+        RESPONSES_WEBSOCKETS_BETA_HEADER_VALUE,
     )?;
     if let Some(residency_requirement) = crate::gateway::current_residency_requirement() {
         insert_header(
@@ -1875,6 +1882,13 @@ mod tests {
                 .get("x-oai-attestation")
                 .and_then(|value| value.to_str().ok()),
             Some("attest-ws")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("openai-beta")
+                .and_then(|value| value.to_str().ok()),
+            Some(super::RESPONSES_WEBSOCKETS_BETA_HEADER_VALUE)
         );
     }
 

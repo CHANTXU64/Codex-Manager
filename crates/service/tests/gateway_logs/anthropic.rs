@@ -1,4 +1,5 @@
 use super::*;
+use codexmanager_core::storage::AggregateApi;
 
 /// 函数 `gateway_claude_protocol_rewrites_messages_path_with_sticky_prompt_cache_key`
 ///
@@ -143,6 +144,181 @@ fn gateway_claude_protocol_rewrites_messages_path_with_sticky_prompt_cache_key()
         .expect("second prompt_cache_key");
     assert!(!first_prompt_cache_key.trim().is_empty());
     assert_eq!(first_prompt_cache_key, second_prompt_cache_key);
+}
+
+#[test]
+fn gateway_aggregate_messages_passthrough_accepts_message_stop_for_non_claude_provider() {
+    let _lock = test_env_guard();
+    let dir = new_test_dir("codexmanager-gateway-aggregate-message-stop");
+    let db_path: PathBuf = dir.join("codexmanager.db");
+    let _db_guard = EnvGuard::set("CODEXMANAGER_DB_PATH", db_path.to_string_lossy().as_ref());
+
+    let anthropic_sse = concat!(
+        "event: message_start\n",
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-20241022\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n",
+        "event: content_block_start\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+        "event: content_block_stop\n",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "event: message_delta\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n",
+        "event: message_stop\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
+    );
+    let (upstream_addr, upstream_rx, upstream_join) =
+        start_mock_upstream_sequence_lenient_with_content_types(
+            vec![(
+                200,
+                anthropic_sse.to_string(),
+                "text/event-stream".to_string(),
+            )],
+            Duration::from_secs(3),
+        );
+
+    let storage = Storage::open(&db_path).expect("open db");
+    storage.init().expect("init db");
+    seed_model_catalog_models(&storage, &["claude-3-5-sonnet-20241022"]);
+    let now = now_ts();
+    let aggregate_id = "agg_non_claude_messages_sse";
+    storage
+        .insert_aggregate_api(&AggregateApi {
+            id: aggregate_id.to_string(),
+            provider_type: "codex".to_string(),
+            supplier_name: Some("non-claude-anthropic-compatible".to_string()),
+            sort: 0,
+            url: format!("http://{upstream_addr}"),
+            auth_type: "apikey".to_string(),
+            auth_params_json: None,
+            action: None,
+            model_override: None,
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_test_at: None,
+            last_test_status: None,
+            last_test_error: None,
+            balance_query_enabled: false,
+            balance_query_template: None,
+            balance_query_base_url: None,
+            balance_query_user_id: None,
+            balance_query_config_json: None,
+            last_balance_at: None,
+            last_balance_status: None,
+            last_balance_error: None,
+            last_balance_json: None,
+        })
+        .expect("insert aggregate api");
+    storage
+        .upsert_aggregate_api_secret(aggregate_id, "upstream-secret")
+        .expect("insert aggregate secret");
+    storage
+        .upsert_model_source_model(&ModelSourceModel {
+            source_kind: "aggregate_api".to_string(),
+            source_id: aggregate_id.to_string(),
+            upstream_model: "claude-3-5-sonnet-20241022".to_string(),
+            display_name: Some("Claude 3.5 Sonnet".to_string()),
+            status: "available".to_string(),
+            discovery_kind: "manual".to_string(),
+            last_synced_at: Some(now),
+            extra_json: "{}".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert aggregate source model");
+    storage
+        .upsert_model_source_mapping(&ModelSourceMapping {
+            id: "mapping_non_claude_messages_sse".to_string(),
+            platform_model_slug: "claude-3-5-sonnet-20241022".to_string(),
+            source_kind: "aggregate_api".to_string(),
+            source_id: aggregate_id.to_string(),
+            upstream_model: "claude-3-5-sonnet-20241022".to_string(),
+            enabled: true,
+            priority: 0,
+            weight: 1,
+            billing_model_slug: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert aggregate source mapping");
+
+    let platform_key = "pk_non_claude_messages_sse";
+    storage
+        .insert_api_key(&ApiKey {
+            id: "gk_non_claude_messages_sse".to_string(),
+            name: Some("non-claude-messages-sse".to_string()),
+            model_slug: Some("claude-3-5-sonnet-20241022".to_string()),
+            reasoning_effort: None,
+            service_tier: None,
+            rotation_strategy: "aggregate_api_rotation".to_string(),
+            aggregate_api_id: Some(aggregate_id.to_string()),
+            account_plan_filter: None,
+            aggregate_api_url: None,
+            client_type: "codex".to_string(),
+            protocol_type: "openai_compat".to_string(),
+            auth_scheme: "x_api_key".to_string(),
+            upstream_base_url: None,
+            static_headers_json: None,
+            key_hash: hash_platform_key_for_test(platform_key),
+            status: "active".to_string(),
+            created_at: now,
+            last_used_at: None,
+        })
+        .expect("insert api key");
+
+    let server = codexmanager_service::start_one_shot_server().expect("start server");
+    let body = serde_json::json!({
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{ "role": "user", "content": "hello" }],
+        "stream": true
+    });
+    let body = serde_json::to_string(&body).expect("serialize request");
+    let (status, response_body) = post_http_raw(
+        &server.addr,
+        "/v1/messages",
+        &body,
+        &[
+            ("Content-Type", "application/json"),
+            ("x-api-key", platform_key),
+            ("anthropic-version", "2023-06-01"),
+        ],
+    );
+    server.join();
+    assert_eq!(status, 200, "gateway response: {response_body}");
+    assert!(response_body.contains("event: message_stop"));
+
+    let captured = upstream_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("receive upstream request");
+    upstream_join.join().expect("join mock upstream");
+    assert_eq!(captured.path, "/v1/messages");
+    assert_eq!(
+        captured.headers.get("authorization").map(String::as_str),
+        Some("Bearer upstream-secret")
+    );
+    assert_eq!(captured.headers.get("x-api-key").map(String::as_str), None);
+
+    let mut matched = None;
+    for _ in 0..40 {
+        let logs = storage
+            .list_request_logs(Some("key:=gk_non_claude_messages_sse"), 20)
+            .expect("list request logs");
+        matched = logs
+            .into_iter()
+            .find(|item| item.request_path == "/v1/messages");
+        if matched.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let log = matched.expect("aggregate request log");
+    assert_eq!(log.status_code, Some(200));
+    assert_eq!(log.error.as_deref(), None);
+    assert_eq!(log.response_adapter.as_deref(), Some("Passthrough"));
+    assert_eq!(log.actual_source_kind.as_deref(), Some("aggregate_api"));
+    assert_eq!(log.actual_source_id.as_deref(), Some(aggregate_id));
 }
 
 /// 函数 `gateway_claude_messages_stay_on_chatgpt_codex_base`

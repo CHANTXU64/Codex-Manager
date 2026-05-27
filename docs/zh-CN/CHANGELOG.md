@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-05-25
+
+### Added
+- 新增定时账号预热功能，可按配置周期主动预热账号，降低首次请求时的冷启动失败概率。
+- 新增实验性 ChatGPT `/v1/responses` WebSocket 上游传输，设置 `CODEXMANAGER_USE_WEBSOCKET_UPSTREAM=1` 后会优先尝试 WebSocket，失败时回退 HTTP 流式路径，并沿用上游代理、连接超时和协议帧校验。
+
+### Changed
+- 请求日志“密钥”列改为展示密钥名称而不是 ID，便于排查调用来源。
+- 发布版本提升到 `0.3.6`，同步更新 workspace、前端包、Tauri 桌面端与锁文件。
+
 ## [0.3.5] - 2026-05-24
 
 ### Added
@@ -272,7 +282,8 @@
 ### Changed
 - 账号管理页操作区整合为单一“账号操作”下拉菜单，替代右侧多按钮堆叠，界面更简洁。
 
-[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.4...v0.3.5
 [0.2.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.2.3...v0.2.6
 [0.2.3]: https://github.com/qxcnm/Codex-Manager/compare/v0.2.0...v0.2.3

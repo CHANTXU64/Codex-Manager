@@ -281,15 +281,10 @@ fn parse_auth_config(
 }
 
 fn resolve_passthrough_sse_protocol(
-    candidate: &AggregateApi,
     path: &str,
     response_adapter: super::super::super::ResponseAdapter,
 ) -> Option<super::super::super::PassthroughSseProtocol> {
     if response_adapter != super::super::super::ResponseAdapter::Passthrough {
-        return None;
-    }
-    let provider_type = normalize_provider_type_value(candidate.provider_type.as_str());
-    if provider_type != AGGREGATE_API_PROVIDER_CLAUDE {
         return None;
     }
     if path == "/v1/messages" || path.starts_with("/v1/messages?") {
@@ -985,8 +980,7 @@ pub(in super::super) fn proxy_aggregate_request(
             }
 
             let inflight_guard = super::super::super::acquire_account_inflight(key_id);
-            let passthrough_sse_protocol =
-                resolve_passthrough_sse_protocol(&candidate, path, response_adapter);
+            let passthrough_sse_protocol = resolve_passthrough_sse_protocol(path, response_adapter);
             let bridge = super::super::super::respond_with_upstream(
                 request
                     .take()
@@ -1395,14 +1389,21 @@ mod tests {
     }
 
     #[test]
-    fn claude_messages_passthrough_uses_anthropic_native_terminal_rules() {
-        let api = aggregate_api_with_action(None);
+    fn messages_passthrough_uses_anthropic_native_terminal_rules_without_provider_gate() {
         let protocol = resolve_passthrough_sse_protocol(
-            &api,
             "/v1/messages?beta=true",
             ResponseAdapter::Passthrough,
         );
         assert_eq!(protocol, Some(PassthroughSseProtocol::AnthropicNative));
+    }
+
+    #[test]
+    fn messages_passthrough_protocol_still_requires_passthrough_adapter() {
+        let protocol = resolve_passthrough_sse_protocol(
+            "/v1/messages?beta=true",
+            ResponseAdapter::AnthropicMessagesFromResponses,
+        );
+        assert_eq!(protocol, None);
     }
 
     #[test]

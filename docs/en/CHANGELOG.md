@@ -5,6 +5,16 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-05-25
+
+### Added
+- Added scheduled account warmup so configured accounts can be warmed periodically, reducing cold-start failures on first use.
+- Added an experimental ChatGPT `/v1/responses` WebSocket upstream transport. When `CODEXMANAGER_USE_WEBSOCKET_UPSTREAM=1` is set, the gateway tries WebSocket first, falls back to HTTP streaming on failure, and keeps upstream proxy, connect-timeout, and protocol-frame validation behavior.
+
+### Changed
+- Request logs now show API key names instead of key IDs in the key column, making call-source debugging easier.
+- Bumped the release version to `0.3.6` and synchronized workspace, frontend package, Tauri desktop metadata, and lockfiles.
+
 ## [0.3.5] - 2026-05-24
 
 ### Added
@@ -272,7 +282,8 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 ### Changed
 - The operation area of ​​the account management page is integrated into a single "Account Operation" drop-down menu, replacing the stack of multiple buttons on the right, making the interface more concise.
 
-[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.4...v0.3.5
 [0.2.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.2.3...v0.2.6
 [0.2.3]: https://github.com/qxcnm/Codex-Manager/compare/v0.2.0...v0.2.3
