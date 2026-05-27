@@ -1,4 +1,5 @@
 use super::*;
+use crate::gateway::conversation_binding::RouteConversationSource;
 use crate::gateway::{
     adapt_request_for_protocol, apply_request_overrides_with_service_tier_and_prompt_cache_key,
 };
@@ -289,6 +290,20 @@ fn sample_request_metadata(prompt_cache_key: Option<&str>) -> ParsedRequestMetad
     }
 }
 
+fn sample_request_metadata_with_previous_response(
+    prompt_cache_key: Option<&str>,
+    previous_response_id: Option<&str>,
+) -> ParsedRequestMetadata {
+    ParsedRequestMetadata {
+        prompt_cache_key: prompt_cache_key.map(str::to_string),
+        has_prompt_cache_key: prompt_cache_key.is_some(),
+        has_previous_response_id: previous_response_id
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        ..Default::default()
+    }
+}
+
 fn sample_incoming_headers(
     conversation_id: Option<&str>,
     turn_state: Option<&str>,
@@ -441,6 +456,151 @@ fn preferred_client_prompt_cache_key_is_disabled_for_anthropic_native_requests()
     );
 
     assert_eq!(actual, None);
+}
+
+#[test]
+fn route_conversation_id_uses_prompt_cache_key_without_native_anchor() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(actual.source, RouteConversationSource::PromptCacheKey);
+    assert!(actual.id.starts_with("pck:v1:"));
+    assert!(!actual.id.contains("client_thread_123456"));
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_when_turn_state_exists() {
+    let incoming_headers =
+        sample_incoming_headers(None, Some("turn_state_anchor"), None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn route_conversation_id_prefers_native_conversation_over_prompt_cache_key() {
+    let incoming_headers = sample_incoming_headers(Some("native-conv"), None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(actual.source, RouteConversationSource::NativeConversation);
+    assert_eq!(actual.id, "native-conv");
+}
+
+#[test]
+fn existing_only_prompt_cache_binding_is_not_used_as_fallback_thread_anchor() {
+    let binding = codexmanager_core::storage::ConversationBinding {
+        platform_key_hash: "key-hash-1".to_string(),
+        conversation_id: "pck:v1:abcdef".to_string(),
+        account_id: "acc-1".to_string(),
+        thread_epoch: 1,
+        thread_anchor: "pck:v1:abcdef".to_string(),
+        status: "active".to_string(),
+        last_model: Some("gpt-5.5".to_string()),
+        last_switch_reason: None,
+        created_at: 1,
+        updated_at: 1,
+        last_used_at: 1,
+    };
+
+    let actual = conversation_binding_for_thread_anchor(
+        Some(RouteConversationSource::PromptCacheKeyExistingOnly),
+        Some(&binding),
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn route_conversation_id_uses_existing_only_prompt_cache_key_when_previous_response_id_exists() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata_with_previous_response(
+        Some("client_thread_123456"),
+        Some("resp_previous"),
+    );
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responses",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    )
+    .expect("route id");
+
+    assert_eq!(
+        actual.source,
+        RouteConversationSource::PromptCacheKeyExistingOnly
+    );
+    assert!(actual.id.starts_with("pck:v1:"));
+    assert!(!actual.id.contains("client_thread_123456"));
+}
+
+#[test]
+fn route_conversation_id_does_not_use_prompt_cache_key_for_non_responses_path_prefix() {
+    let incoming_headers = sample_incoming_headers(None, None, None, None, None);
+    let initial_request_meta = sample_request_metadata(Some("client_thread_123456"));
+    let client_request_meta = sample_request_metadata(Some("client_thread_123456"));
+
+    let actual = resolve_route_conversation_id(
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "/v1/responsesxxx",
+        "platform-key-hash",
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+    );
+
+    assert!(actual.is_none());
+}
+
+#[test]
+fn prompt_cache_route_id_is_not_split_by_model() {
+    let first = prompt_cache_route_id(
+        "platform-key-hash",
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "client_thread_123456",
+    );
+    let second = prompt_cache_route_id(
+        "platform-key-hash",
+        crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+        "client_thread_123456",
+    );
+
+    assert_eq!(first, second);
 }
 
 /// 函数 `aggregate_passthrough_applies_model_reasoning_and_service_tier_overrides_without_forcing_log_tier`
@@ -956,7 +1116,10 @@ fn compact_subagent_marks_standard_responses_request_as_compact() {
     );
 
     assert!(is_compact_subagent_request("/v1/responses", &headers));
-    assert!(!is_compact_subagent_request("/v1/chat/completions", &headers));
+    assert!(!is_compact_subagent_request(
+        "/v1/chat/completions",
+        &headers
+    ));
 }
 
 #[test]
@@ -981,10 +1144,8 @@ fn compact_subagent_rewrites_standard_responses_path_to_compact_path() {
 fn compact_subagent_uses_compact_model_forward_rules_on_standard_responses_path() {
     let original_rules = crate::gateway::current_compact_model_forward_rules();
     let _ = crate::gateway::set_compact_model_forward_rules("");
-    crate::gateway::set_compact_model_forward_rules(
-        "gpt-5.4=gpt-5.4-openai-compact",
-    )
-    .expect("set compact model forward rules");
+    crate::gateway::set_compact_model_forward_rules("gpt-5.4=gpt-5.4-openai-compact")
+        .expect("set compact model forward rules");
 
     let headers = sample_incoming_headers_with_session_id(
         None,
@@ -997,12 +1158,8 @@ fn compact_subagent_uses_compact_model_forward_rules_on_standard_responses_path(
     );
 
     assert_eq!(
-        resolve_compact_model_override_for_request(
-            "/v1/responses",
-            &headers,
-            Some("gpt-5.4"),
-        )
-        .as_deref(),
+        resolve_compact_model_override_for_request("/v1/responses", &headers, Some("gpt-5.4"),)
+            .as_deref(),
         Some("gpt-5.4-openai-compact")
     );
 

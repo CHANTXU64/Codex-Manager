@@ -2,7 +2,7 @@ use codexmanager_core::storage::{Account, ConversationBinding, Token};
 
 use super::super::super::IncomingHeaderSnapshot;
 use crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE;
-use crate::gateway::conversation_binding::ConversationRoutingContext;
+use crate::gateway::conversation_binding::{ConversationRoutingContext, RouteConversationSource};
 
 pub(in super::super) struct UpstreamRequestSetup {
     pub(in super::super) upstream_base: String,
@@ -38,7 +38,8 @@ pub(in super::super) fn prepare_request_setup(
     candidates: &mut Vec<(Account, Token)>,
     key_id: &str,
     platform_key_hash: &str,
-    local_conversation_id: Option<&str>,
+    route_conversation_id: Option<&str>,
+    route_conversation_source: RouteConversationSource,
     conversation_binding: Option<&ConversationBinding>,
     model_for_log: Option<&str>,
     trace_id: &str,
@@ -51,11 +52,12 @@ pub(in super::super) fn prepare_request_setup(
     let candidate_count = candidates.len();
     let account_max_inflight = super::super::super::account_max_inflight_limit();
     let conversation_routing =
-        super::super::super::conversation_binding::prepare_conversation_routing(
+        super::super::super::conversation_binding::prepare_conversation_routing_with_source(
             platform_key_hash,
-            local_conversation_id,
+            route_conversation_id,
             conversation_binding,
             candidates,
+            route_conversation_source,
         );
     let anthropic_has_thread_anchor = protocol_type == PROTOCOL_ANTHROPIC_NATIVE
         && (has_prompt_cache_key || conversation_routing.is_some());

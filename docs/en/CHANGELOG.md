@@ -5,6 +5,22 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-05-27
+
+### Added
+- Added Linux arm64 as a `release-all.yml` publishing target so it is covered by the unified multi-platform release pipeline.
+
+### Fixed
+- Fixed unstable local account routing for OpenAI-compatible `/v1/responses` requests with `prompt_cache_key`; matching client keys now reuse the same upstream account while preserving the original client key upstream.
+- Fixed short `prompt_cache_key` values, such as `pc_1`, being skipped by local account binding and spread across balanced rotation.
+- Fixed ChatGPT upstream transport errors not continuing failover across candidate accounts.
+- Fixed missing beta marker headers during Responses WebSocket upstream handshakes.
+- Fixed inconsistent `message_stop` terminal detection for `/v1/messages` compatibility streams.
+- Fixed account upserts potentially clearing existing tokens.
+
+### Changed
+- Bumped the release version to `0.3.7` and synchronized workspace, frontend package, Tauri desktop metadata, and lockfiles.
+
 ## [0.3.6] - 2026-05-25
 
 ### Added
@@ -282,7 +298,8 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 ### Changed
 - The operation area of ​​the account management page is integrated into a single "Account Operation" drop-down menu, replacing the stack of multiple buttons on the right, making the interface more concise.
 
-[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.4...v0.3.5
 [0.2.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.2.3...v0.2.6

@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-05-27
+
+### Added
+- `release-all.yml` 新增 Linux arm64 发布目标，统一进入多平台发版流水线。
+
+### Fixed
+- 修复 OpenAI 兼容 `/v1/responses` 的 `prompt_cache_key` 本地账号路由不稳定问题；相同客户端 key 会绑定复用同一上游账号，并且上游请求继续保留客户端原始 key。
+- 修复短 `prompt_cache_key`（如 `pc_1`）未参与本地账号绑定的问题，避免 balanced 轮询把同一缓存前缀分散到不同账号。
+- 修复 ChatGPT 上游传输错误未按候选账号继续 failover 的问题。
+- 修复 Responses WebSocket 上游握手头缺失 beta 标记的问题。
+- 修复 `/v1/messages` 兼容流对 `message_stop` 终止事件识别不一致的问题。
+- 修复账号 upsert 时已有 token 可能被清空的问题。
+
+### Changed
+- 发布版本提升到 `0.3.7`，同步更新 workspace、前端包、Tauri 桌面端与锁文件。
+
 ## [0.3.6] - 2026-05-25
 
 ### Added
@@ -282,7 +298,8 @@
 ### Changed
 - 账号管理页操作区整合为单一“账号操作”下拉菜单，替代右侧多按钮堆叠，界面更简洁。
 
-[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.4...v0.3.5
 [0.2.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.2.3...v0.2.6

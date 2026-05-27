@@ -4,6 +4,8 @@ mod anthropic;
 mod basic;
 #[path = "gateway_logs/images.rs"]
 mod images;
+#[path = "gateway_logs/prompt_cache.rs"]
+mod prompt_cache;
 #[path = "gateway_logs/retry_logging.rs"]
 mod retry_logging;
 #[path = "gateway_logs/support.rs"]
