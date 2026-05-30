@@ -142,6 +142,36 @@ fn non_rate_limited_mark_keeps_existing_behavior_without_offense_count() {
     assert!(!state.offense_counts.contains_key("acc"));
 }
 
+#[test]
+fn anthropic_challenge_cooldown_extends_generic_challenge_window() {
+    let _guard = crate::test_env_guard();
+    clear_account_cooldown_for_tests();
+    let lock = ACCOUNT_COOLDOWN_UNTIL.get_or_init(|| Mutex::new(AccountCooldownState::default()));
+    let now = now_ts();
+
+    mark_account_cooldown("acc", CooldownReason::Challenge);
+    let generic_until = {
+        let state = lock.lock().expect("cooldown state lock");
+        *state
+            .entries
+            .get("acc")
+            .expect("generic challenge cooldown")
+    };
+
+    mark_account_cooldown("acc", CooldownReason::AnthropicChallenge);
+    let anthropic_until = {
+        let state = lock.lock().expect("cooldown state lock");
+        *state
+            .entries
+            .get("acc")
+            .expect("anthropic challenge cooldown")
+    };
+
+    assert!(generic_until >= now + DEFAULT_ACCOUNT_COOLDOWN_CHALLENGE_SECS);
+    assert!(anthropic_until >= now + DEFAULT_ACCOUNT_COOLDOWN_ANTHROPIC_CHALLENGE_SECS);
+    assert!(anthropic_until > generic_until);
+}
+
 /// 函数 `rate_limited_offense_resets_after_quiet_period`
 ///
 /// 作者: gaohongshun

@@ -1,5 +1,6 @@
 use super::{
-    clear_candidate_cache_for_tests, collect_gateway_candidates, CANDIDATE_CACHE_TTL_ENV,
+    clear_candidate_cache_for_tests, collect_gateway_candidates,
+    collect_gateway_candidates_with_low_quota_mode, LowQuotaCandidateMode, CANDIDATE_CACHE_TTL_ENV,
     LOW_QUOTA_THRESHOLD_ENV, QUOTA_GUARD_ALLOW_ALL_LOW_FALLBACK_ENV,
 };
 use crate::account_status::mark_account_unavailable_for_gateway_error;
@@ -537,6 +538,99 @@ fn low_quota_accounts_are_skipped_when_healthy_available() {
         .map(|(account, _)| account.id.as_str())
         .collect();
     assert_eq!(ids, vec!["acc-healthy-high", "acc-healthy-low"]);
+
+    clear_candidate_cache_for_tests();
+    if let Some(value) = previous_ttl {
+        std::env::set_var(CANDIDATE_CACHE_TTL_ENV, value);
+    } else {
+        std::env::remove_var(CANDIDATE_CACHE_TTL_ENV);
+    }
+    if let Some(value) = previous_db_path {
+        std::env::set_var("CODEXMANAGER_DB_PATH", value);
+    } else {
+        std::env::remove_var("CODEXMANAGER_DB_PATH");
+    }
+    if let Some(value) = previous_threshold {
+        std::env::set_var(LOW_QUOTA_THRESHOLD_ENV, value);
+    } else {
+        std::env::remove_var(LOW_QUOTA_THRESHOLD_ENV);
+    }
+    super::reload_from_env();
+}
+
+#[test]
+fn append_low_quota_fallback_keeps_low_quota_candidates_at_tail() {
+    let _guard = crate::test_env_guard();
+    let previous_ttl = std::env::var(CANDIDATE_CACHE_TTL_ENV).ok();
+    let previous_db_path = std::env::var("CODEXMANAGER_DB_PATH").ok();
+    let previous_threshold = std::env::var(LOW_QUOTA_THRESHOLD_ENV).ok();
+    std::env::set_var(CANDIDATE_CACHE_TTL_ENV, "0");
+    std::env::set_var(
+        "CODEXMANAGER_DB_PATH",
+        "selection-low-quota-append-fallback-test",
+    );
+    std::env::set_var(LOW_QUOTA_THRESHOLD_ENV, "95");
+    super::reload_from_env();
+    clear_candidate_cache_for_tests();
+
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+
+    let now = now_ts();
+    for (id, sort, used_percent) in [
+        ("acc-low-a", 0_i64, 99.0),
+        ("acc-healthy", 1_i64, 10.0),
+        ("acc-low-b", 2_i64, 98.0),
+    ] {
+        storage
+            .insert_account(&Account {
+                id: id.to_string(),
+                label: id.to_string(),
+                issuer: "issuer".to_string(),
+                chatgpt_account_id: None,
+                workspace_id: None,
+                group_name: None,
+                sort,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("insert account");
+        storage
+            .insert_token(&Token {
+                account_id: id.to_string(),
+                id_token: "id".to_string(),
+                access_token: "access".to_string(),
+                refresh_token: "refresh".to_string(),
+                api_key_access_token: None,
+                last_refresh: now,
+            })
+            .expect("insert token");
+        storage
+            .insert_usage_snapshot(&UsageSnapshotRecord {
+                account_id: id.to_string(),
+                used_percent: Some(used_percent),
+                window_minutes: Some(300),
+                resets_at: None,
+                secondary_used_percent: None,
+                secondary_window_minutes: None,
+                secondary_resets_at: None,
+                credits_json: None,
+                captured_at: now,
+            })
+            .expect("insert snapshot");
+    }
+
+    let candidates = collect_gateway_candidates_with_low_quota_mode(
+        &storage,
+        LowQuotaCandidateMode::AppendFallback,
+    )
+    .expect("collect candidates");
+    let ids: Vec<&str> = candidates
+        .iter()
+        .map(|(account, _)| account.id.as_str())
+        .collect();
+    assert_eq!(ids, vec!["acc-healthy", "acc-low-a", "acc-low-b"]);
 
     clear_candidate_cache_for_tests();
     if let Some(value) = previous_ttl {

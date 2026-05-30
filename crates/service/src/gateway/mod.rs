@@ -398,8 +398,8 @@ use runtime_config::{
 };
 use selection::collect_gateway_candidates;
 pub(crate) use selection::{
-    current_quota_guard_config, invalidate_candidate_cache, set_quota_guard_config,
-    QuotaGuardConfig,
+    collect_gateway_candidates_with_low_quota_mode, current_quota_guard_config,
+    invalidate_candidate_cache, set_quota_guard_config, LowQuotaCandidateMode, QuotaGuardConfig,
 };
 #[cfg(test)]
 use token_exchange::account_token_exchange_lock;

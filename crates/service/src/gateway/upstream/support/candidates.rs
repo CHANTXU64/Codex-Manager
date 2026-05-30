@@ -22,9 +22,13 @@ pub(crate) fn prepare_gateway_candidates(
     storage: &Storage,
     request_model: Option<&str>,
     account_plan_filter: Option<&str>,
+    low_quota_mode: super::super::super::LowQuotaCandidateMode,
 ) -> Result<Vec<(Account, Token)>, String> {
     // 中文注释：保持账号原始顺序（按账户排序字段）作为候选顺序，失败时再依次切下一个。
-    let mut candidates = super::super::super::collect_gateway_candidates(storage)?;
+    let mut candidates = super::super::super::collect_gateway_candidates_with_low_quota_mode(
+        storage,
+        low_quota_mode,
+    )?;
     let normalized_filter = account_plan_filter
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("all"));
@@ -142,9 +146,12 @@ pub(in super::super) fn candidate_skip_reason_for_proxy(
     idx: usize,
     candidate_count: usize,
     account_max_inflight: usize,
+    skip_last_cooldown: bool,
 ) -> Option<CandidateSkipReason> {
     let has_more_candidates = idx + 1 < candidate_count;
-    if super::super::super::is_account_in_cooldown(account_id) && has_more_candidates {
+    if super::super::super::is_account_in_cooldown(account_id)
+        && (has_more_candidates || skip_last_cooldown)
+    {
         super::super::super::record_gateway_candidate_skip(
             super::super::super::GatewayCandidateSkipReason::Cooldown,
         );
@@ -499,7 +506,19 @@ mod tests {
     #[test]
     fn candidate_skip_reason_for_proxy_allows_failover_when_head_account_is_inflight_limited() {
         let _guard = crate::gateway::acquire_account_inflight("acc-preferred");
-        let actual = candidate_skip_reason_for_proxy("acc-preferred", 0, 2, 1);
+        let actual = candidate_skip_reason_for_proxy("acc-preferred", 0, 2, 1, false);
         assert_eq!(actual, Some(CandidateSkipReason::Inflight));
+    }
+
+    #[test]
+    fn candidate_skip_reason_for_proxy_can_skip_last_cooldown_candidate() {
+        let account_id = "acc-cooldown-last-skip-test";
+        crate::gateway::gateway_mark_account_cooldown_for_status(account_id, 403);
+
+        let default_last = candidate_skip_reason_for_proxy(account_id, 0, 1, 0, false);
+        let strict_last = candidate_skip_reason_for_proxy(account_id, 0, 1, 0, true);
+
+        assert_eq!(default_last, None);
+        assert_eq!(strict_last, Some(CandidateSkipReason::Cooldown));
     }
 }

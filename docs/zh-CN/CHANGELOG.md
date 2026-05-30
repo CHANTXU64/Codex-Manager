@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-05-30
+
+### Fixed
+- 修复代理只保留 `x-codex-turn-state` 且请求仍带 `prompt_cache_key` 时，本地 prompt cache 账号绑定无法复用的问题，并补齐 `anchor_mode` 诊断日志。
+- 修复 `/v1/messages/count_tokens` 可能被误转发成真实 Responses 生成的问题，改为本地 token 估算。
+- 增强 Anthropic-native / Claude Code 兼容路径对 Cloudflare challenge 的处理：禁用兼容流 `zstd`、加入 challenge 冷却与候选切换，并让低额度账号只作为尾部兜底。
+- 将 Claude Code 2.x 会话中段的 `system` message 归一为 Responses `developer` role，降低 ChatGPT Codex 后端触发 Cloudflare challenge 的概率。
+
+### Changed
+- 发布版本提升到 `0.3.8`，同步更新 workspace、前端包、Tauri 桌面端与锁文件。
+
 ## [0.3.7] - 2026-05-27
 
 ### Added
@@ -298,7 +309,8 @@
 ### Changed
 - 账号管理页操作区整合为单一“账号操作”下拉菜单，替代右侧多按钮堆叠，界面更简洁。
 
-[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.4...v0.3.5

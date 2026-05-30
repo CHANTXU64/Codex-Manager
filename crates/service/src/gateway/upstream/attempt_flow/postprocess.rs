@@ -40,6 +40,13 @@ fn should_failover_immediately_for_cloudflare(
         && should_treat_as_challenge_for_retry(status, upstream_content_type, upstream_cf_ray)
 }
 
+fn challenge_cooldown_reason(protocol_type: &str) -> super::super::super::CooldownReason {
+    if protocol_type == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE {
+        return super::super::super::CooldownReason::AnthropicChallenge;
+    }
+    super::super::super::CooldownReason::Challenge
+}
+
 /// 函数 `try_refresh_chatgpt_access_token`
 ///
 /// 作者: gaohongshun
@@ -341,7 +348,7 @@ where
     ) {
         super::super::super::mark_account_cooldown(
             &account.id,
-            super::super::super::CooldownReason::Challenge,
+            challenge_cooldown_reason(request_ctx.protocol_type),
         );
         log_gateway_result(
             Some(url),
@@ -594,6 +601,15 @@ where
         }
     }
 
+    if request_ctx.protocol_type == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE
+        && should_treat_as_challenge_for_retry(status, upstream_content_type, upstream_cf_ray)
+    {
+        super::super::super::mark_account_cooldown(
+            &account.id,
+            challenge_cooldown_reason(request_ctx.protocol_type),
+        );
+    }
+
     match decide_upstream_outcome(
         storage,
         &account.id,
@@ -669,6 +685,18 @@ mod tests {
             api_key_access_token: Some("api-key-token".to_string()),
             last_refresh: now,
         }
+    }
+
+    #[test]
+    fn anthropic_challenge_uses_extended_cooldown_reason() {
+        assert_eq!(
+            challenge_cooldown_reason(crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE),
+            crate::gateway::CooldownReason::AnthropicChallenge
+        );
+        assert_eq!(
+            challenge_cooldown_reason(crate::apikey_profile::PROTOCOL_OPENAI_COMPAT),
+            crate::gateway::CooldownReason::Challenge
+        );
     }
 
     /// 函数 `retries_server_error_once_before_final_decision`

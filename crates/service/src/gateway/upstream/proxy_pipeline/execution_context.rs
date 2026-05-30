@@ -108,6 +108,7 @@ impl<'a> GatewayUpstreamExecutionContext<'a> {
             idx,
             self.candidate_count,
             self.account_max_inflight,
+            self.protocol_type == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE,
         )
     }
 
@@ -370,10 +371,7 @@ mod tests {
     #[test]
     fn direct_upstream_model_is_logged_for_override() {
         assert_eq!(
-            resolve_direct_upstream_model_for_log(
-                Some("gpt-5"),
-                Some("gpt-5.4-openai-compact"),
-            ),
+            resolve_direct_upstream_model_for_log(Some("gpt-5"), Some("gpt-5.4-openai-compact"),),
             Some("gpt-5.4-openai-compact")
         );
     }

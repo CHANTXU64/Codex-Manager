@@ -373,9 +373,9 @@ fn gateway_previous_response_without_existing_pck_binding_does_not_create_bindin
 }
 
 #[test]
-fn gateway_turn_state_disables_prompt_cache_route_even_when_binding_exists() {
+fn gateway_turn_state_only_prompt_cache_route_reuses_existing_binding() {
     let _lock = test_env_guard();
-    let dir = new_test_dir("codexmanager-gateway-pck-turn-state-disabled");
+    let dir = new_test_dir("codexmanager-gateway-pck-turn-state-only-reuse");
     let db_path: PathBuf = dir.join("codexmanager.db");
     let _db_guard = EnvGuard::set("CODEXMANAGER_DB_PATH", db_path.to_string_lossy().as_ref());
     let _route_guard = EnvGuard::set("CODEXMANAGER_ROUTE_STRATEGY", "balanced");
@@ -387,11 +387,11 @@ fn gateway_turn_state_disables_prompt_cache_route_even_when_binding_exists() {
 
     let storage = Storage::open(&db_path).expect("open db");
     storage.init().expect("init db");
-    let platform_key = "pk_prompt_cache_turn_state_disabled";
+    let platform_key = "pk_prompt_cache_turn_state_only_reuse";
     let key_hash = seed_openai_compat_gateway(
         &storage,
         platform_key,
-        "gk_prompt_cache_turn_state_disabled",
+        "gk_prompt_cache_turn_state_only_reuse",
     );
     let prompt_cache_key = "client-thread-turn-state-123456";
     let route_id = prompt_cache_route_id(&key_hash, prompt_cache_key);
@@ -432,13 +432,67 @@ fn gateway_turn_state_disables_prompt_cache_route_even_when_binding_exists() {
     upstream_join.join().expect("join mock upstream");
     assert_eq!(
         auth_account(&captured),
-        "acc_prompt_cache_a",
-        "turn_state should disable pck route selection"
+        "acc_prompt_cache_b",
+        "orphan turn_state with prompt_cache_key should reuse the pck account binding"
     );
 
     let binding = storage
         .get_conversation_binding(&key_hash, &route_id)
         .expect("load pck binding")
-        .expect("seeded pck binding should remain untouched");
+        .expect("seeded pck binding should remain");
     assert_eq!(binding.account_id, "acc_prompt_cache_b");
+}
+
+#[test]
+fn gateway_turn_state_previous_response_without_existing_pck_binding_does_not_create_binding() {
+    let _lock = test_env_guard();
+    let dir = new_test_dir("codexmanager-gateway-pck-turn-state-existing-only-no-create");
+    let db_path: PathBuf = dir.join("codexmanager.db");
+    let _db_guard = EnvGuard::set("CODEXMANAGER_DB_PATH", db_path.to_string_lossy().as_ref());
+    let _route_guard = EnvGuard::set("CODEXMANAGER_ROUTE_STRATEGY", "balanced");
+
+    let (upstream_addr, upstream_rx, upstream_join) =
+        start_mock_upstream_sequence(vec![(200, ok_response("resp_turn_state_existing_only"))]);
+    let upstream_base = format!("http://{upstream_addr}/backend-api/codex");
+    let _upstream_guard = EnvGuard::set("CODEXMANAGER_UPSTREAM_BASE_URL", &upstream_base);
+
+    let storage = Storage::open(&db_path).expect("open db");
+    storage.init().expect("init db");
+    let platform_key = "pk_prompt_cache_turn_state_existing_only_no_create";
+    let key_hash = seed_openai_compat_gateway(
+        &storage,
+        platform_key,
+        "gk_prompt_cache_turn_state_existing_only_no_create",
+    );
+    let prompt_cache_key = "client-thread-turn-state-existing-only-123456";
+    let route_id = prompt_cache_route_id(&key_hash, prompt_cache_key);
+
+    let server = codexmanager_service::start_one_shot_server().expect("start server");
+    post_responses_with_headers(
+        &server.addr,
+        platform_key,
+        serde_json::json!({
+            "model": MODEL,
+            "input": "turn state previous response without known binding",
+            "stream": false,
+            "previous_response_id": "resp_missing_turn_state_binding",
+            "prompt_cache_key": prompt_cache_key
+        }),
+        &[("x-codex-turn-state", "turn-state-anchor")],
+    );
+    server.join();
+
+    let captured = upstream_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("receive upstream request");
+    upstream_join.join().expect("join mock upstream");
+    assert_eq!(auth_account(&captured), "acc_prompt_cache_a");
+
+    let actual = storage
+        .get_conversation_binding(&key_hash, &route_id)
+        .expect("load pck binding");
+    assert!(
+        actual.is_none(),
+        "turn_state existing-only pck route must not create a binding without history"
+    );
 }

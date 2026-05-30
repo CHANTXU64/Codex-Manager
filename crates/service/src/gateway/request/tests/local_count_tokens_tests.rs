@@ -25,6 +25,14 @@ fn estimate_input_tokens_uses_messages_and_system_text() {
     assert_eq!(count, 5);
 }
 
+#[test]
+fn anthropic_count_tokens_matches_original_path_after_protocol_adaptation() {
+    assert!(is_anthropic_count_tokens_request_path(
+        "/v1/messages/count_tokens?beta=true"
+    ));
+    assert!(!is_anthropic_count_tokens_request_path("/v1/responses"));
+}
+
 /// 函数 `estimate_input_tokens_rejects_invalid_json`
 ///
 /// 作者: gaohongshun

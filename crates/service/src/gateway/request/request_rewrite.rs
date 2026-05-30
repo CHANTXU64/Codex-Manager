@@ -403,9 +403,7 @@ fn apply_model_forward_rule_if_needed(obj: &mut serde_json::Map<String, Value>) 
     true
 }
 
-fn apply_compact_model_forward_rule_if_needed(
-    obj: &mut serde_json::Map<String, Value>,
-) -> bool {
+fn apply_compact_model_forward_rule_if_needed(obj: &mut serde_json::Map<String, Value>) -> bool {
     let Some(current_model) = obj
         .get("model")
         .and_then(Value::as_str)
@@ -779,8 +777,11 @@ fn apply_request_overrides_with_prompt_cache_key_mode(
             }
 
             if let Some(level) = normalized_reasoning.as_deref() {
-                if chat_completions::apply_reasoning_override(chat_rules_path.as_str(), obj, Some(level))
-                {
+                if chat_completions::apply_reasoning_override(
+                    chat_rules_path.as_str(),
+                    obj,
+                    Some(level),
+                ) {
                     changed = true;
                 }
             }

@@ -1925,9 +1925,9 @@ fn normalize_compact_api_path(raw: &str) -> Result<String, String> {
     let canonical = normalized.split('?').next().unwrap_or(normalized).trim();
     match canonical {
         "/v1/responses/compact" | "/v1/chat/completions" => Ok(canonical.to_string()),
-        _ => Err(
-            "compactApiPath must be /v1/responses/compact or /v1/chat/completions".to_string(),
-        ),
+        _ => {
+            Err("compactApiPath must be /v1/responses/compact or /v1/chat/completions".to_string())
+        }
     }
 }
 

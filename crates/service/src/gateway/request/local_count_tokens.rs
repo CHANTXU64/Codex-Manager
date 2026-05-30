@@ -106,6 +106,10 @@ fn estimate_input_tokens_from_gemini_request(body: &[u8]) -> Result<u64, String>
     Ok(((char_count as u64) / 4).max(1))
 }
 
+fn is_anthropic_count_tokens_request_path(path: &str) -> bool {
+    path == "/v1/messages/count_tokens" || path.starts_with("/v1/messages/count_tokens?")
+}
+
 /// 函数 `maybe_respond_local_count_tokens`
 ///
 /// 作者: gaohongshun
@@ -124,7 +128,7 @@ pub(super) fn maybe_respond_local_count_tokens(
     protocol_type: &str,
     original_path: &str,
     path: &str,
-    response_adapter: super::ResponseAdapter,
+    _response_adapter: super::ResponseAdapter,
     request_method: &str,
     body: &[u8],
     model_for_log: Option<&str>,
@@ -133,20 +137,29 @@ pub(super) fn maybe_respond_local_count_tokens(
 ) -> Result<Option<tiny_http::Request>, String> {
     let is_anthropic_count_tokens = protocol_type == PROTOCOL_ANTHROPIC_NATIVE
         && request_method.eq_ignore_ascii_case("POST")
-        && (path == "/v1/messages/count_tokens" || path.starts_with("/v1/messages/count_tokens?"));
+        && (is_anthropic_count_tokens_request_path(original_path)
+            || is_anthropic_count_tokens_request_path(path));
     let is_gemini_count_tokens = protocol_type == PROTOCOL_GEMINI_NATIVE
         && request_method.eq_ignore_ascii_case("POST")
-        && is_gemini_count_tokens_request_path(path);
+        && (is_gemini_count_tokens_request_path(original_path)
+            || is_gemini_count_tokens_request_path(path));
     if !is_anthropic_count_tokens && !is_gemini_count_tokens {
         return Ok(Some(request));
     }
+    let local_path = if is_anthropic_count_tokens_request_path(original_path)
+        || is_gemini_count_tokens_request_path(original_path)
+    {
+        original_path
+    } else {
+        path
+    };
     let context = super::local_response::LocalResponseContext {
         trace_id,
         key_id,
         protocol_type,
         original_path,
-        path,
-        response_adapter,
+        path: local_path,
+        response_adapter: super::ResponseAdapter::Passthrough,
         request_method,
         model_for_log,
         reasoning_for_log,

@@ -36,12 +36,14 @@ pub(in super::super) fn prepare_candidates_for_proxy(
     model_for_log: Option<&str>,
     reasoning_for_log: Option<&str>,
     account_plan_filter: Option<&str>,
+    low_quota_mode: super::super::super::LowQuotaCandidateMode,
     respond_when_empty: bool,
 ) -> CandidatePrecheckResult {
     let candidates: Vec<(Account, Token)> = match super::candidates::prepare_gateway_candidates(
         storage,
         model_for_log,
         account_plan_filter,
+        low_quota_mode,
     ) {
         Ok(v) => v,
         Err(err) => {

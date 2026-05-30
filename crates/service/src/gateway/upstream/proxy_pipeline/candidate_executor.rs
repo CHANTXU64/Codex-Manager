@@ -94,6 +94,26 @@ fn record_failover_attempt(
     *last_attempt_error = attempt_trace.last_attempt_error.take();
 }
 
+fn is_challenge_failover_error(error: Option<&str>) -> bool {
+    error
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| {
+            let normalized = value.to_ascii_lowercase();
+            normalized.contains("challenge")
+                || normalized.contains("cloudflare")
+                || normalized.contains("cf_ray")
+        })
+}
+
+fn should_force_strip_after_anthropic_challenge(
+    context: &GatewayUpstreamExecutionContext<'_>,
+    attempt_trace: &CandidateAttemptTrace,
+) -> bool {
+    context.protocol_type() == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE
+        && is_challenge_failover_error(attempt_trace.last_attempt_error.as_deref())
+}
+
 fn should_failover_terminal_gateway_error(
     context: &GatewayUpstreamExecutionContext<'_>,
     account_id: &str,
@@ -187,6 +207,7 @@ pub(in super::super) fn execute_candidate_sequence(
     let mut skipped_inflight = 0usize;
     let mut last_attempt_url = None;
     let mut last_attempt_error = None;
+    let mut force_strip_session_affinity_after_challenge = false;
     for (idx, (account, mut token)) in candidates.into_iter().enumerate() {
         if deadline::is_expired(request_deadline) {
             let request = request
@@ -203,8 +224,8 @@ pub(in super::super) fn execute_candidate_sequence(
             return Ok(CandidateExecutionResult::Handled);
         }
 
-        let strip_session_affinity =
-            state.strip_session_affinity(&account, idx, setup.anthropic_has_thread_anchor);
+        let strip_session_affinity = force_strip_session_affinity_after_challenge
+            || state.strip_session_affinity(&account, idx, setup.anthropic_has_thread_anchor);
         let attempt_thread = super::super::super::conversation_binding::resolve_attempt_thread(
             setup.conversation_routing.as_ref(),
             &account,
@@ -308,6 +329,14 @@ pub(in super::super) fn execute_candidate_sequence(
 
         match decision {
             CandidateUpstreamDecision::Failover => {
+                if should_force_strip_after_anthropic_challenge(context, &attempt_trace) {
+                    force_strip_session_affinity_after_challenge = true;
+                    log::warn!(
+                        "event=gateway_anthropic_challenge_strip_affinity trace_id={} account_id={} next_attempt_strip_session_affinity=true",
+                        trace_id,
+                        account.id
+                    );
+                }
                 record_failover_attempt(
                     &mut attempt_trace,
                     &mut last_attempt_url,
@@ -328,6 +357,16 @@ pub(in super::super) fn execute_candidate_sequence(
                     &mut last_attempt_url,
                     &mut last_attempt_error,
                 ) {
+                    if context.protocol_type() == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE
+                        && is_challenge_failover_error(Some(message.as_str()))
+                    {
+                        force_strip_session_affinity_after_challenge = true;
+                        log::warn!(
+                            "event=gateway_anthropic_challenge_strip_affinity trace_id={} account_id={} next_attempt_strip_session_affinity=true",
+                            trace_id,
+                            account.id
+                        );
+                    }
                     continue;
                 }
                 let request = request
@@ -482,7 +521,7 @@ pub(in super::super) fn execute_candidate_sequence(
 
 #[cfg(test)]
 mod tests {
-    use super::should_forward_thread_anchor_as_prompt_cache_key;
+    use super::{is_challenge_failover_error, should_forward_thread_anchor_as_prompt_cache_key};
 
     #[test]
     fn gemini_native_does_not_forward_thread_anchor_as_prompt_cache_key() {
@@ -499,5 +538,17 @@ mod tests {
         assert!(should_forward_thread_anchor_as_prompt_cache_key(
             crate::apikey_profile::PROTOCOL_OPENAI_COMPAT
         ));
+    }
+
+    #[test]
+    fn challenge_failover_error_detection_matches_cloudflare_markers() {
+        assert!(is_challenge_failover_error(Some(
+            "upstream challenge blocked"
+        )));
+        assert!(is_challenge_failover_error(Some(
+            "Cloudflare 安全验证页 [cf_ray=abc]"
+        )));
+        assert!(!is_challenge_failover_error(Some("upstream rate-limited")));
+        assert!(!is_challenge_failover_error(None));
     }
 }

@@ -116,6 +116,17 @@ fn should_fallback_to_aggregate_after_account_exhaustion(
     is_hybrid_account_first_route(execution_plan)
 }
 
+fn low_quota_candidate_mode_for_protocol(
+    protocol_type: &str,
+) -> super::super::LowQuotaCandidateMode {
+    if protocol_type == PROTOCOL_ANTHROPIC_NATIVE {
+        // 中文注释：Anthropic messages 兼容请求容易触发账号级 Cloudflare challenge；
+        // 只在该协议下把低额度账号放到末尾兜底，普通 Codex 路径仍保留原有配额保护。
+        return super::super::LowQuotaCandidateMode::AppendFallback;
+    }
+    super::super::LowQuotaCandidateMode::NormalOnly
+}
+
 fn executor_kind_label(value: GatewayUpstreamExecutorKind) -> &'static str {
     match value {
         GatewayUpstreamExecutorKind::CodexResponses => "codex_responses",
@@ -652,6 +663,7 @@ pub(in super::super) fn proxy_validated_request(
         model_for_log.as_deref(),
         reasoning_for_log.as_deref(),
         account_plan_filter.as_deref(),
+        low_quota_candidate_mode_for_protocol(protocol_type.as_str()),
         respond_when_account_candidates_empty(execution_plan),
     ) {
         CandidatePrecheckResult::Ready {

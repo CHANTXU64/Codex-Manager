@@ -5,6 +5,17 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-05-30
+
+### Fixed
+- Fixed local prompt-cache account binding not being reused when a proxy preserved only `x-codex-turn-state` while the request still carried `prompt_cache_key`, and added `anchor_mode` diagnostics.
+- Fixed `/v1/messages/count_tokens` requests potentially being forwarded as real Responses generations by using local token estimation.
+- Hardened Anthropic-native and Claude Code compatibility against Cloudflare challenges by disabling `zstd` on compatibility streams, adding challenge cooldown and candidate switching, and keeping low-quota accounts as tail fallbacks.
+- Normalized Claude Code 2.x mid-conversation `system` messages to the Responses `developer` role to reduce ChatGPT Codex backend Cloudflare challenges.
+
+### Changed
+- Bumped the release version to `0.3.8` and synchronized workspace, frontend package, Tauri desktop metadata, and lockfiles.
+
 ## [0.3.7] - 2026-05-27
 
 ### Added
@@ -298,7 +309,8 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 ### Changed
 - The operation area of ​​the account management page is integrated into a single "Account Operation" drop-down menu, replacing the stack of multiple buttons on the right, making the interface more concise.
 
-[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/qxcnm/Codex-Manager/compare/v0.3.4...v0.3.5

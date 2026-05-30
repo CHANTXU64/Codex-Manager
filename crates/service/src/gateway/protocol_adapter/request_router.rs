@@ -339,6 +339,17 @@ fn responses_message(role: &str, content: Value) -> Value {
     })
 }
 
+fn anthropic_message_role_to_responses(role: &str) -> &'static str {
+    match role {
+        "assistant" => "assistant",
+        // Claude Code 2.x sends mid-conversation system messages for MCP/runtime
+        // instructions. The Codex Responses backend expects that content as a
+        // developer message, not as a raw input role named "system".
+        "system" | "developer" => "developer",
+        _ => "user",
+    }
+}
+
 fn anthropic_system_to_developer_message(system: Option<&Value>) -> Option<Value> {
     anthropic_system_to_text(system).map(|text| {
         json!({
@@ -386,11 +397,12 @@ fn anthropic_messages_to_input(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("user");
+        let response_role = anthropic_message_role_to_responses(role);
         match message.get("content") {
             Some(Value::String(text)) => {
                 if let Some(text) = normalize_text(text) {
                     out.push(responses_message(
-                        role,
+                        response_role,
                         json!([{ "type": "input_text", "text": text }]),
                     ));
                 }
@@ -419,12 +431,15 @@ fn anthropic_messages_to_input(
                         }
                         "tool_use" | "tool_result" => {
                             if !content_parts.is_empty() {
-                                out.push(responses_message(role, Value::Array(content_parts)));
+                                out.push(responses_message(
+                                    response_role,
+                                    Value::Array(content_parts),
+                                ));
                                 content_parts = Vec::new();
                             }
                             if let Some(mapped) = anthropic_content_block_to_responses(
                                 content_item,
-                                role,
+                                response_role,
                                 short_name_map,
                                 tool_name_restore_map,
                             ) {
@@ -435,18 +450,21 @@ fn anthropic_messages_to_input(
                     }
                 }
                 if !content_parts.is_empty() {
-                    out.push(responses_message(role, Value::Array(content_parts)));
+                    out.push(responses_message(
+                        response_role,
+                        Value::Array(content_parts),
+                    ));
                 }
             }
             Some(Value::Object(_)) => {
                 if let Some(content) = anthropic_message_content_to_responses(
                     message.get("content"),
-                    role,
+                    response_role,
                     short_name_map,
                     tool_name_restore_map,
                 )? {
                     if matches!(content, Value::Array(_)) {
-                        out.push(responses_message(role, content));
+                        out.push(responses_message(response_role, content));
                     } else {
                         out.push(content);
                     }
@@ -1318,6 +1336,40 @@ mod tests {
         assert_eq!(payload["reasoning"]["effort"], "medium");
         assert_eq!(payload["include"][0], "reasoning.encrypted_content");
         assert_eq!(payload["parallel_tool_calls"], true);
+    }
+
+    #[test]
+    fn anthropic_mid_conversation_system_messages_map_to_developer() {
+        let body = serde_json::json!({
+            "model": "claude-sonnet",
+            "messages": [
+                { "role": "user", "content": "hi" },
+                { "role": "system", "content": "# MCP Server Instructions" },
+                { "role": "developer", "content": "runtime note" },
+                { "role": "unknown", "content": "fallback note" }
+            ],
+            "stream": true
+        });
+
+        let adapted = adapt_request_for_protocol(
+            PROTOCOL_ANTHROPIC_NATIVE,
+            "/v1/messages?beta=true",
+            serde_json::to_vec(&body).expect("body"),
+        )
+        .expect("adapt anthropic request");
+
+        let payload: serde_json::Value =
+            serde_json::from_slice(&adapted.body).expect("parse adapted body");
+        assert_eq!(payload["input"][0]["role"], "user");
+        assert_eq!(payload["input"][1]["role"], "developer");
+        assert_eq!(
+            payload["input"][1]["content"][0]["text"],
+            "# MCP Server Instructions"
+        );
+        assert_eq!(payload["input"][2]["role"], "developer");
+        assert_eq!(payload["input"][2]["content"][0]["text"], "runtime note");
+        assert_eq!(payload["input"][3]["role"], "user");
+        assert_eq!(payload["input"][3]["content"][0]["text"], "fallback note");
     }
 
     #[test]

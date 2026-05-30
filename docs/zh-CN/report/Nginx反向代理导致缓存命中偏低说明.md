@@ -49,6 +49,13 @@ ignore_invalid_headers off;
 
 一旦代理层把头吞掉，后端就只能退化为“不稳定的 fallback 会话”，自然很难拿到和桌面端相同的缓存命中。
 
+新版本会对一种常见残缺态做代码兜底：如果请求只剩 `x-codex-turn-state`，但 `conversation_id`
+和 `session_id` 都已经在代理层丢失，同时请求体仍带有 `prompt_cache_key`，网关会允许
+`prompt_cache_key` 只参与本地账号路由，以减少同一缓存前缀被 balanced 轮询打散的概率。
+这个兜底不会伪造 `conversation_id`，也不会把内部路由 ID 写给上游。
+
+不过这只是降级保护，不是推荐部署形态。正确修法仍然是完整透传会话头。
+
 ## 典型症状
 
 部署出问题时，通常会看到下面这些现象：

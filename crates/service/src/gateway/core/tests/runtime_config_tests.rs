@@ -464,14 +464,15 @@ fn set_compact_model_forward_rules_updates_env_cache_and_matching() {
     let _guard = crate::test_env_guard();
     let _rules_guard = EnvGuard::clear(ENV_COMPACT_MODEL_FORWARD_RULES);
 
-    let applied =
-        set_compact_model_forward_rules("gpt-5.4=gpt-5.4-openai-compact")
-            .expect("set compact model forward rules");
+    let applied = set_compact_model_forward_rules("gpt-5.4=gpt-5.4-openai-compact")
+        .expect("set compact model forward rules");
 
     assert_eq!(applied, "gpt-5.4=gpt-5.4-openai-compact");
     assert_eq!(current_compact_model_forward_rules(), applied);
     assert_eq!(
-        std::env::var(ENV_COMPACT_MODEL_FORWARD_RULES).ok().as_deref(),
+        std::env::var(ENV_COMPACT_MODEL_FORWARD_RULES)
+            .ok()
+            .as_deref(),
         Some(applied.as_str())
     );
     assert_eq!(

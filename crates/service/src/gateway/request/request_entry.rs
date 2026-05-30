@@ -127,9 +127,7 @@ pub(crate) fn handle_gateway_request(mut request: Request) -> Result<(), String>
     let request_method_for_count_tokens = validated.request_method.clone();
     let model_for_count_tokens = validated.model_for_log.clone();
     let reasoning_for_count_tokens = validated.reasoning_for_log.clone();
-    let request = if validated.rotation_strategy == crate::apikey_profile::ROTATION_AGGREGATE_API
-        || validated.rotation_strategy == crate::apikey_profile::ROTATION_HYBRID
-    {
+    let request = if validated.rotation_strategy == crate::apikey_profile::ROTATION_AGGREGATE_API {
         request
     } else {
         match super::maybe_respond_local_count_tokens(
@@ -141,7 +139,7 @@ pub(crate) fn handle_gateway_request(mut request: Request) -> Result<(), String>
             path_for_count_tokens.as_str(),
             validated.response_adapter,
             request_method_for_count_tokens.as_str(),
-            validated.body.as_ref(),
+            validated.passthrough_body.as_ref(),
             model_for_count_tokens.as_deref(),
             reasoning_for_count_tokens.as_deref(),
             &validated.storage,

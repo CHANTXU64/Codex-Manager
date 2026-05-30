@@ -156,6 +156,12 @@ fn is_gemini_codex_compat(protocol_type: &str, request_path: &str, target_url: &
         && super::super::config::is_chatgpt_backend_base(target_url)
 }
 
+fn is_anthropic_codex_compat(protocol_type: &str, request_path: &str, target_url: &str) -> bool {
+    protocol_type == crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE
+        && request_path.starts_with("/v1/responses")
+        && super::super::config::is_chatgpt_backend_base(target_url)
+}
+
 const CPA_GEMINI_CODEX_USER_AGENT: &str =
     "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)";
 const CPA_GEMINI_CODEX_ORIGINATOR: &str = "codex-tui";
@@ -312,6 +318,11 @@ fn resolve_request_compression(
 ) -> RequestCompression {
     if is_gemini_codex_compat(protocol_type, request_path, target_url) {
         // 中文注释：CPA 的 Gemini->Codex 路径不做 zstd 请求压缩。
+        return RequestCompression::None;
+    }
+    if is_anthropic_codex_compat(protocol_type, request_path, target_url) {
+        // 中文注释：Claude Code 兼容路径经过 /v1/responses 适配，但不是原生 Codex 客户端；
+        // 禁用 zstd 请求压缩可降低 ChatGPT 边缘把兼容请求误判为 challenge 的概率。
         return RequestCompression::None;
     }
     resolve_request_compression_with_flag(
@@ -1853,6 +1864,33 @@ mod tests {
             true,
             RequestCompression::None
         ));
+    }
+
+    #[test]
+    fn anthropic_codex_compat_disables_request_compression_without_touching_codex() {
+        let _env_lock = crate::test_env_guard();
+        let _reload_guard = RuntimeConfigReloadGuard;
+        let _compression_guard = EnvGuard::set("CODEXMANAGER_ENABLE_REQUEST_COMPRESSION", "1");
+        crate::gateway::reload_runtime_config_from_env();
+
+        assert_eq!(
+            resolve_request_compression(
+                crate::apikey_profile::PROTOCOL_ANTHROPIC_NATIVE,
+                "https://chatgpt.com/backend-api/codex/responses",
+                "/v1/responses",
+                true,
+            ),
+            RequestCompression::None
+        );
+        assert_eq!(
+            resolve_request_compression(
+                crate::apikey_profile::PROTOCOL_OPENAI_COMPAT,
+                "https://chatgpt.com/backend-api/codex/responses",
+                "/v1/responses",
+                true,
+            ),
+            RequestCompression::Zstd
+        );
     }
 
     #[test]

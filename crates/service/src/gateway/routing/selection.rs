@@ -76,8 +76,15 @@ impl QuotaGuardConfig {
 #[derive(Clone)]
 struct CandidateSnapshotCache {
     db_path: String,
+    low_quota_mode: LowQuotaCandidateMode,
     expires_at: Instant,
     candidates: Vec<(Account, Token)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LowQuotaCandidateMode {
+    NormalOnly,
+    AppendFallback,
 }
 
 /// 函数 `collect_gateway_candidates`
@@ -94,12 +101,19 @@ struct CandidateSnapshotCache {
 pub(crate) fn collect_gateway_candidates(
     storage: &Storage,
 ) -> Result<Vec<(Account, Token)>, String> {
-    if let Some(cached) = read_candidate_cache() {
+    collect_gateway_candidates_with_low_quota_mode(storage, LowQuotaCandidateMode::NormalOnly)
+}
+
+pub(crate) fn collect_gateway_candidates_with_low_quota_mode(
+    storage: &Storage,
+    low_quota_mode: LowQuotaCandidateMode,
+) -> Result<Vec<(Account, Token)>, String> {
+    if let Some(cached) = read_candidate_cache(low_quota_mode) {
         return Ok(cached);
     }
 
-    let candidates = collect_gateway_candidates_uncached(storage)?;
-    write_candidate_cache(candidates.clone());
+    let candidates = collect_gateway_candidates_uncached(storage, low_quota_mode)?;
+    write_candidate_cache(low_quota_mode, candidates.clone());
     Ok(candidates)
 }
 
@@ -114,7 +128,10 @@ pub(crate) fn collect_gateway_candidates(
 ///
 /// # 返回
 /// 返回函数执行结果
-fn collect_gateway_candidates_uncached(storage: &Storage) -> Result<Vec<(Account, Token)>, String> {
+fn collect_gateway_candidates_uncached(
+    storage: &Storage,
+    low_quota_mode: LowQuotaCandidateMode,
+) -> Result<Vec<(Account, Token)>, String> {
     // 选择可用账号作为网关上游候选
     let candidates = storage
         .list_gateway_candidates()
@@ -129,7 +146,7 @@ fn collect_gateway_candidates_uncached(storage: &Storage) -> Result<Vec<(Account
         }
         out.push((candidate_account, token));
     }
-    apply_quota_guard(storage, &mut out);
+    apply_quota_guard(storage, &mut out, low_quota_mode);
     if out.is_empty() {
         log_no_candidates(storage);
     }
@@ -137,7 +154,11 @@ fn collect_gateway_candidates_uncached(storage: &Storage) -> Result<Vec<(Account
 }
 
 /// 将低于保留额度阈值的账号从正常候选中剔除；正常池为空时按兜底开关决定是否继续使用低额度账号。
-fn apply_quota_guard(storage: &Storage, candidates: &mut Vec<(Account, Token)>) {
+fn apply_quota_guard(
+    storage: &Storage,
+    candidates: &mut Vec<(Account, Token)>,
+    low_quota_mode: LowQuotaCandidateMode,
+) {
     if candidates.is_empty() {
         return;
     }
@@ -160,6 +181,9 @@ fn apply_quota_guard(storage: &Storage, candidates: &mut Vec<(Account, Token)>) 
     }
     if normal.is_empty() && config.allow_all_low_quota_fallback {
         *candidates = low_quota;
+    } else if low_quota_mode == LowQuotaCandidateMode::AppendFallback {
+        normal.extend(low_quota);
+        *candidates = normal;
     } else {
         *candidates = normal;
     }
@@ -273,7 +297,7 @@ fn parse_bool_env(raw: &str, fallback: bool) -> bool {
 ///
 /// # 返回
 /// 返回函数执行结果
-fn read_candidate_cache() -> Option<Vec<(Account, Token)>> {
+fn read_candidate_cache(low_quota_mode: LowQuotaCandidateMode) -> Option<Vec<(Account, Token)>> {
     let ttl = candidate_cache_ttl();
     if ttl.is_zero() {
         return None;
@@ -291,7 +315,10 @@ fn read_candidate_cache() -> Option<Vec<(Account, Token)>> {
         }
     };
     let cached = guard.as_ref()?;
-    if cached.db_path != db_path || cached.expires_at <= now {
+    if cached.db_path != db_path
+        || cached.low_quota_mode != low_quota_mode
+        || cached.expires_at <= now
+    {
         *guard = None;
         return None;
     }
@@ -309,7 +336,7 @@ fn read_candidate_cache() -> Option<Vec<(Account, Token)>> {
 ///
 /// # 返回
 /// 无
-fn write_candidate_cache(candidates: Vec<(Account, Token)>) {
+fn write_candidate_cache(low_quota_mode: LowQuotaCandidateMode, candidates: Vec<(Account, Token)>) {
     let ttl = candidate_cache_ttl();
     if ttl.is_zero() {
         return;
@@ -328,6 +355,7 @@ fn write_candidate_cache(candidates: Vec<(Account, Token)>) {
     };
     *guard = Some(CandidateSnapshotCache {
         db_path,
+        low_quota_mode,
         expires_at,
         candidates,
     });

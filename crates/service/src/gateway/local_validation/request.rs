@@ -1317,13 +1317,31 @@ fn resolve_preferred_client_prompt_cache_key(
         return None;
     };
 
-    if incoming_headers.conversation_id().is_some() || incoming_headers.turn_state().is_some() {
+    if has_complete_native_thread_anchor(incoming_headers) {
         // 中文注释：原生 Codex 已经提供稳定线程锚点时，prompt_cache_key 不能反客为主；
-        // 否则会和 conversation_id / turn-state 冲突，导致 resume 线程异常。
+        // 否则会和 conversation_id / 完整 session+turn-state 冲突，导致 resume 线程异常。
         return None;
     }
 
     Some(preferred)
+}
+
+fn header_value_present(value: Option<&str>) -> bool {
+    value.map(str::trim).is_some_and(|value| !value.is_empty())
+}
+
+fn has_complete_native_thread_anchor(
+    incoming_headers: &super::super::IncomingHeaderSnapshot,
+) -> bool {
+    header_value_present(incoming_headers.conversation_id())
+        || (header_value_present(incoming_headers.session_id())
+            && header_value_present(incoming_headers.turn_state()))
+}
+
+fn is_turn_state_only_anchor(incoming_headers: &super::super::IncomingHeaderSnapshot) -> bool {
+    !header_value_present(incoming_headers.conversation_id())
+        && !header_value_present(incoming_headers.session_id())
+        && header_value_present(incoming_headers.turn_state())
 }
 
 /// 函数 `resolve_local_conversation_id`
@@ -1414,26 +1432,30 @@ fn resolve_route_conversation_id(
         });
     }
 
-    if incoming_headers.turn_state().is_some() {
-        return None;
-    }
-
     if prompt_cache_route_binding_enabled(protocol_type, normalized_path) {
         if let Some(prompt_cache_key) =
             normalized_prompt_cache_key_for_route(initial_request_meta, client_request_meta)
         {
-            let source = if initial_request_meta.has_previous_response_id
-                || client_request_meta.has_previous_response_id
+            if !header_value_present(incoming_headers.turn_state())
+                || !header_value_present(incoming_headers.session_id())
             {
-                RouteConversationSource::PromptCacheKeyExistingOnly
-            } else {
-                RouteConversationSource::PromptCacheKey
-            };
-            return Some(RouteConversationId {
-                id: prompt_cache_route_id(platform_key_hash, protocol_type, prompt_cache_key),
-                source,
-            });
+                let source = if initial_request_meta.has_previous_response_id
+                    || client_request_meta.has_previous_response_id
+                {
+                    RouteConversationSource::PromptCacheKeyExistingOnly
+                } else {
+                    RouteConversationSource::PromptCacheKey
+                };
+                return Some(RouteConversationId {
+                    id: prompt_cache_route_id(platform_key_hash, protocol_type, prompt_cache_key),
+                    source,
+                });
+            }
         }
+    }
+
+    if header_value_present(incoming_headers.turn_state()) {
+        return None;
     }
 
     super::super::resolve_local_conversation_id_with_sticky_fallback(
@@ -1455,6 +1477,36 @@ fn conversation_binding_for_thread_anchor<'a>(
     } else {
         conversation_binding
     }
+}
+
+fn log_anchor_mode_diagnostic(
+    trace_id: &str,
+    incoming_headers: &super::super::IncomingHeaderSnapshot,
+    initial_request_meta: &ParsedRequestMetadata,
+    client_request_meta: &ParsedRequestMetadata,
+    route_conversation_source: Option<RouteConversationSource>,
+) {
+    if !is_turn_state_only_anchor(incoming_headers) {
+        return;
+    }
+    let prompt_cache_key_present =
+        normalized_prompt_cache_key_for_route(initial_request_meta, client_request_meta).is_some();
+    let anchor_mode = if prompt_cache_key_present
+        && route_conversation_source.is_some_and(|source| source.is_prompt_cache_key())
+    {
+        "turn_state_only_prompt_cache_route"
+    } else {
+        "turn_state_only_no_prompt_cache_route"
+    };
+    log::info!(
+        "event=gateway_anchor_mode trace_id={} anchor_mode={} conversation_present={} session_present={} turn_state_present={} prompt_cache_key_present={}",
+        trace_id,
+        anchor_mode,
+        if header_value_present(incoming_headers.conversation_id()) { "true" } else { "false" },
+        if header_value_present(incoming_headers.session_id()) { "true" } else { "false" },
+        if header_value_present(incoming_headers.turn_state()) { "true" } else { "false" },
+        if prompt_cache_key_present { "true" } else { "false" },
+    );
 }
 
 fn resolve_client_is_stream(
@@ -1883,6 +1935,13 @@ pub(super) fn build_local_validation_result(
     );
     let route_conversation_id = route_conversation.as_ref().map(|route| route.id.clone());
     let route_conversation_source = route_conversation.as_ref().map(|route| route.source);
+    log_anchor_mode_diagnostic(
+        trace_id.as_str(),
+        &incoming_headers,
+        &initial_request_meta,
+        &client_request_meta,
+        route_conversation_source,
+    );
     let conversation_binding = super::super::conversation_binding::load_conversation_binding(
         &storage,
         api_key.key_hash.as_str(),
